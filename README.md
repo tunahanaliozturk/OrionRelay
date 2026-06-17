@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="OrionRelay" width="150" />
+</p>
+
 # OrionRelay
 
 [![CI/CD](https://github.com/tunahanaliozturk/OrionRelay/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/tunahanaliozturk/OrionRelay/actions/workflows/ci-cd.yml)

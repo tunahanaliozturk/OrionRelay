@@ -19,6 +19,7 @@ public sealed class WebhookDispatcher : IWebhookDispatcher
     private readonly WebhookDiagnostics diagnostics;
     private readonly IWebhookSigner? signer;
     private readonly IWebhookDeliveryObserver observer;
+    private readonly IDeadLetterSink? deadLetterSink;
     private readonly Func<TimeSpan, CancellationToken, Task> delay;
     private readonly Func<double> jitter;
     private readonly Func<DateTimeOffset> now;
@@ -29,14 +30,20 @@ public sealed class WebhookDispatcher : IWebhookDispatcher
     /// <param name="diagnostics">The shared metrics instance.</param>
     /// <param name="signer">The request signer, or null to send unsigned.</param>
     /// <param name="observer">The delivery observer, or null for none.</param>
+    /// <param name="deadLetterSink">
+    /// The sink that receives deliveries which exhaust their attempt budget, or null to discard
+    /// them.
+    /// </param>
     public WebhookDispatcher(
         HttpClient httpClient,
         WebhookDeliveryOptions options,
         WebhookDiagnostics diagnostics,
         IWebhookSigner? signer = null,
-        IWebhookDeliveryObserver? observer = null)
+        IWebhookDeliveryObserver? observer = null,
+        IDeadLetterSink? deadLetterSink = null)
         : this(httpClient, options, diagnostics, signer, observer,
-               delay: Task.Delay, jitter: Random.Shared.NextDouble, now: () => DateTimeOffset.UtcNow)
+               delay: Task.Delay, jitter: Random.Shared.NextDouble, now: () => DateTimeOffset.UtcNow,
+               deadLetterSink: deadLetterSink)
     {
     }
 
@@ -48,7 +55,8 @@ public sealed class WebhookDispatcher : IWebhookDispatcher
         IWebhookDeliveryObserver? observer,
         Func<TimeSpan, CancellationToken, Task> delay,
         Func<double> jitter,
-        Func<DateTimeOffset> now)
+        Func<DateTimeOffset> now,
+        IDeadLetterSink? deadLetterSink = null)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(options);
@@ -63,6 +71,7 @@ public sealed class WebhookDispatcher : IWebhookDispatcher
         this.diagnostics = diagnostics;
         this.signer = signer;
         this.observer = observer ?? NullWebhookDeliveryObserver.Instance;
+        this.deadLetterSink = deadLetterSink;
         this.delay = delay;
         this.jitter = jitter;
         this.now = now;
@@ -123,7 +132,34 @@ public sealed class WebhookDispatcher : IWebhookDispatcher
         var failure = WebhookDeliveryResult.Failure(attemptsMade, lastStatus, lastException);
         RecordCompletion(message, attemptsMade, succeeded: false, eventTypeTag);
         SafeObserve(() => observer.OnExhausted(message, failure));
+        await DeadLetterAsync(message, failure, cancellationToken).ConfigureAwait(false);
         return failure;
+    }
+
+    private async Task DeadLetterAsync(
+        WebhookMessage message, WebhookDeliveryResult failure, CancellationToken cancellationToken)
+    {
+        if (deadLetterSink is null)
+        {
+            return;
+        }
+
+        var entry = new DeadLetterEntry(message, failure, now());
+        try
+        {
+            await deadLetterSink.WriteAsync(entry, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Caller-driven cancellation propagates; the delivery has already failed regardless.
+            throw;
+        }
+#pragma warning disable CA1031 // a sink fault must never mask the already-final failure result
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // A dead-letter sink outage cannot turn an exhausted delivery into a thrown exception.
+        }
     }
 
     private async Task<AttemptOutcome> SendOnceAsync(WebhookMessage message, CancellationToken cancellationToken)

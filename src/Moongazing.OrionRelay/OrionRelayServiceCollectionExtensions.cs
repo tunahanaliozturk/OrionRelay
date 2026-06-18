@@ -17,7 +17,9 @@ public static class OrionRelayServiceCollectionExtensions
     /// Register the webhook dispatcher, its dedicated <see cref="HttpClient"/>, the shared
     /// diagnostics, and a signer built from <paramref name="signingSecret"/>. If a consumer
     /// registers an <see cref="IWebhookDeliveryObserver"/> before resolving the dispatcher it is
-    /// used; otherwise delivery runs without one.
+    /// used; otherwise delivery runs without one. Deliveries that exhaust their attempt budget are
+    /// routed to an <see cref="IDeadLetterSink"/>, defaulting to an in-memory sink unless the
+    /// consumer registers their own first.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="signingSecret">
@@ -38,6 +40,7 @@ public static class OrionRelayServiceCollectionExtensions
         services.TryAddSingleton(options);
 
         services.TryAddSingleton<WebhookDiagnostics>();
+        services.TryAddSingleton<IDeadLetterSink, InMemoryDeadLetterSink>();
 
         if (!string.IsNullOrEmpty(signingSecret))
         {
@@ -59,7 +62,8 @@ public static class OrionRelayServiceCollectionExtensions
                 sp.GetRequiredService<WebhookDeliveryOptions>(),
                 sp.GetRequiredService<WebhookDiagnostics>(),
                 sp.GetService<IWebhookSigner>(),
-                sp.GetService<IWebhookDeliveryObserver>());
+                sp.GetService<IWebhookDeliveryObserver>(),
+                sp.GetService<IDeadLetterSink>());
         });
 
         return services;

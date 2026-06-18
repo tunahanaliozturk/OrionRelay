@@ -60,4 +60,32 @@ public sealed class OrionRelayRegistrationTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             services.AddOrionRelay("secret", o => o.MaxAttempts = 0));
     }
+
+    [Fact]
+    public void AddOrionRelay_registers_an_in_memory_dead_letter_sink_by_default()
+    {
+        var services = new ServiceCollection();
+        services.AddOrionRelay("secret");
+
+        using var provider = services.BuildServiceProvider();
+        Assert.IsType<InMemoryDeadLetterSink>(provider.GetService<IDeadLetterSink>());
+    }
+
+    [Fact]
+    public void AddOrionRelay_honours_a_consumer_registered_dead_letter_sink()
+    {
+        var services = new ServiceCollection();
+        var custom = new CustomDeadLetterSink();
+        services.AddSingleton<IDeadLetterSink>(custom);
+        services.AddOrionRelay("secret");
+
+        using var provider = services.BuildServiceProvider();
+        Assert.Same(custom, provider.GetService<IDeadLetterSink>());
+    }
+
+    private sealed class CustomDeadLetterSink : IDeadLetterSink
+    {
+        public Task WriteAsync(DeadLetterEntry entry, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+    }
 }

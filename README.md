@@ -204,8 +204,10 @@ outage never breaks delivery. If you register none, a no-op (`NullWebhookDeliver
 
 ### Dead-letter sink
 
-When a delivery exhausts its attempt budget, the dispatcher routes it to an `IDeadLetterSink`
-exactly once, after the final failed attempt, so a consumer can persist, alert on, or replay it.
+When a delivery terminates without success, the dispatcher routes it to an `IDeadLetterSink`
+exactly once, after the final attempt, so a consumer can persist, alert on, or replay it. A delivery
+terminates either by exhausting its retry budget or by hitting a fatal, non-retryable response (for
+example an HTTP 400), so the sink receives any terminal non-success, not only budget-exhausted ones.
 The sink receives a `DeadLetterEntry` carrying the original message, the terminal
 `WebhookDeliveryResult`, and the instant the delivery was abandoned:
 

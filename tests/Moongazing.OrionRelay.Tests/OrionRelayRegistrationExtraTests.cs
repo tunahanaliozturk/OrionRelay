@@ -83,6 +83,34 @@ public sealed class OrionRelayRegistrationExtraTests
             services.AddOrionRelay("secret", o => o.BaseDelay = TimeSpan.FromSeconds(-1)));
     }
 
+    [Fact]
+    public void The_default_dead_letter_sink_retains_nothing_and_cannot_grow_unbounded()
+    {
+        // Guards the unbounded-default regression: the default sink must discard, not accumulate.
+        var services = new ServiceCollection();
+        services.AddOrionRelay("secret");
+
+        using var provider = services.BuildServiceProvider();
+        var sink = provider.GetRequiredService<IDeadLetterSink>();
+
+        Assert.Same(NullDeadLetterSink.Instance, sink);
+        Assert.IsNotType<InMemoryDeadLetterSink>(sink);
+    }
+
+    [Fact]
+    public void A_consumer_can_opt_into_a_bounded_in_memory_sink()
+    {
+        // Opt-in retention is still available, and it is bounded by construction.
+        var services = new ServiceCollection();
+        services.AddSingleton<IDeadLetterSink>(new InMemoryDeadLetterSink(capacity: 16));
+        services.AddOrionRelay("secret");
+
+        using var provider = services.BuildServiceProvider();
+        var sink = Assert.IsType<InMemoryDeadLetterSink>(provider.GetRequiredService<IDeadLetterSink>());
+
+        Assert.Equal(16, sink.Capacity);
+    }
+
     private sealed class CountingObserver : IWebhookDeliveryObserver
     {
         public void OnAttempt(WebhookMessage message, int attempt, int? statusCode, Exception? exception)

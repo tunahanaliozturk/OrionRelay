@@ -24,6 +24,30 @@ public sealed class WebhookDispatcher : IWebhookDispatcher
     private readonly Func<double> jitter;
     private readonly Func<DateTimeOffset> now;
 
+    /// <summary>
+    /// Create a dispatcher without a dead-letter sink. Exhausted deliveries are discarded.
+    /// </summary>
+    /// <remarks>
+    /// This overload preserves the v0.1.0 binary contract. It exists as a distinct method (not an
+    /// optional sixth parameter on the sink-aware overload) because optional parameters are a
+    /// compile-time convenience: a consumer compiled against 0.1.0 emits a call to the five-argument
+    /// method, which must remain present on the type for that assembly to bind at runtime.
+    /// </remarks>
+    /// <param name="httpClient">The client used for every attempt.</param>
+    /// <param name="options">Delivery tuning. Validated on construction.</param>
+    /// <param name="diagnostics">The shared metrics instance.</param>
+    /// <param name="signer">The request signer, or null to send unsigned.</param>
+    /// <param name="observer">The delivery observer, or null for none.</param>
+    public WebhookDispatcher(
+        HttpClient httpClient,
+        WebhookDeliveryOptions options,
+        WebhookDiagnostics diagnostics,
+        IWebhookSigner? signer = null,
+        IWebhookDeliveryObserver? observer = null)
+        : this(httpClient, options, diagnostics, signer, observer, deadLetterSink: NullDeadLetterSink.Instance)
+    {
+    }
+
     /// <summary>Create a dispatcher.</summary>
     /// <param name="httpClient">The client used for every attempt.</param>
     /// <param name="options">Delivery tuning. Validated on construction.</param>
@@ -38,9 +62,9 @@ public sealed class WebhookDispatcher : IWebhookDispatcher
         HttpClient httpClient,
         WebhookDeliveryOptions options,
         WebhookDiagnostics diagnostics,
-        IWebhookSigner? signer = null,
-        IWebhookDeliveryObserver? observer = null,
-        IDeadLetterSink? deadLetterSink = null)
+        IWebhookSigner? signer,
+        IWebhookDeliveryObserver? observer,
+        IDeadLetterSink? deadLetterSink)
         : this(httpClient, options, diagnostics, signer, observer,
                delay: Task.Delay, jitter: Random.Shared.NextDouble, now: () => DateTimeOffset.UtcNow,
                deadLetterSink: deadLetterSink)

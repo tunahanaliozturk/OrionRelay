@@ -62,13 +62,16 @@ public sealed class OrionRelayRegistrationTests
     }
 
     [Fact]
-    public void AddOrionRelay_registers_an_in_memory_dead_letter_sink_by_default()
+    public void AddOrionRelay_registers_a_no_op_dead_letter_sink_by_default()
     {
+        // The default sink must retain nothing: a prolonged receiver outage cannot be allowed to
+        // grow the process working set by holding every abandoned delivery (bodies included) for
+        // the process lifetime. In-memory retention is opt-in, not the default.
         var services = new ServiceCollection();
         services.AddOrionRelay("secret");
 
         using var provider = services.BuildServiceProvider();
-        Assert.IsType<InMemoryDeadLetterSink>(provider.GetService<IDeadLetterSink>());
+        Assert.Same(NullDeadLetterSink.Instance, provider.GetService<IDeadLetterSink>());
     }
 
     [Fact]

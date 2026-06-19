@@ -133,6 +133,30 @@ void OnExhausted(WebhookMessage message, WebhookDeliveryResult result);
 
 Typical uses: dead-lettering exhausted deliveries, alerting, and per-attempt audit logging.
 
+### Dead-letter sink
+
+`IDeadLetterSink` receives each delivery that exhausts its attempt budget, exactly once, carrying
+its terminal failure context, so you can persist, alert on, or replay it.
+
+- The default registered by `AddOrionRelay` is `NullDeadLetterSink`: it discards every entry and
+  retains nothing. This keeps the default safe under a prolonged receiver outage, where a retaining
+  sink would otherwise hold every abandoned delivery (bodies included) for the process lifetime and
+  grow the working set without bound.
+- `InMemoryDeadLetterSink` is opt-in. It retains the most recent entries up to a fixed `Capacity`
+  (`DefaultCapacity` = 1024) and evicts oldest-first once full, so even the in-memory option is
+  bounded by construction. It is for tests, demos, and single-process apps; entries are lost on
+  restart, so register a durable sink for production.
+- Register your own sink in DI before the dispatcher resolves to override the default:
+
+```csharp
+\ Opt into bounded in-memory capture (e.g. for local inspection):
+services.AddSingleton<IDeadLetterSink>(new InMemoryDeadLetterSink(capacity: 256));
+services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
+```
+
+A sink fault never breaks delivery: the dispatcher swallows any exception `WriteAsync` raises, so a
+sink outage cannot turn an already-failed delivery into a thrown exception for the caller.
+
 ---
 
 ## 7. Telemetry

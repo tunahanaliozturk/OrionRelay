@@ -10,20 +10,30 @@ All notable changes to OrionRelay are documented in this file. The format is bas
 
 ### Added
 
-- `IDeadLetterSink` / `InMemoryDeadLetterSink`: deliveries that exhaust their attempt budget are
-  routed to a pluggable sink exactly once, carrying a `DeadLetterEntry` with the original message,
-  the terminal `WebhookDeliveryResult`, and the abandonment timestamp. The in-memory default keeps
-  entries in arrival order; register your own sink for durable storage. Sink faults are swallowed
-  so an outage cannot turn an already-failed delivery into a thrown exception.
-- `WebhookDispatcher` now accepts an optional `IDeadLetterSink`, and `AddOrionRelay()` wires the
-  in-memory sink by default unless the consumer registers one first.
+- `IDeadLetterSink`: deliveries that exhaust their attempt budget are routed to a pluggable sink
+  exactly once, carrying a `DeadLetterEntry` with the original message, the terminal
+  `WebhookDeliveryResult`, and the abandonment timestamp. Sink faults are swallowed so an outage
+  cannot turn an already-failed delivery into a thrown exception.
+- `NullDeadLetterSink`: the no-op sink registered by default. It retains nothing, so a prolonged
+  receiver outage cannot grow the process working set by accumulating abandoned deliveries.
+- `InMemoryDeadLetterSink`: opt-in in-memory capture, bounded by a fixed `Capacity`
+  (`DefaultCapacity` = 1024) with documented oldest-first eviction once full. Entries are lost on
+  restart; register a durable sink for production.
+- `WebhookDispatcher` gains a sink-aware constructor overload accepting an `IDeadLetterSink`. The
+  original v0.1.0 five-argument constructor is preserved as a distinct overload (delegating to the
+  no-op sink), so assemblies compiled against 0.1.0 remain binary-compatible.
+- `AddOrionRelay()` wires `NullDeadLetterSink` by default; register your own sink (for example a
+  bounded `InMemoryDeadLetterSink` or a durable store) before the dispatcher resolves to capture
+  abandoned deliveries.
 
 ### Tests
 
 - Added coverage for dead-letter routing (exhausted, non-retryable, and successful deliveries;
-  sink-fault isolation; arrival order; registration default and override) and a regression test
-  locking `IWebhookDeliveryObserver.OnExhausted` to exactly one call, after the final failed
-  attempt, carrying the terminal result.
+  sink-fault isolation; arrival order), the bounded in-memory sink (oldest-first eviction past
+  capacity, non-positive-capacity guard), the restored five-argument constructor routing to a
+  no-op without throwing, and the safe no-op registration default plus opt-in override. Also a
+  regression test locking `IWebhookDeliveryObserver.OnExhausted` to exactly one call, after the
+  final failed attempt, carrying the terminal result.
 
 ## [0.1.0] - 2026-06-14
 

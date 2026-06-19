@@ -131,6 +131,59 @@ public sealed class DeadLetterSinkTests
         Assert.Equal("second", sink.Entries[1].Message.EventId);
     }
 
+    [Fact]
+    public async Task Restored_five_argument_ctor_routes_an_exhausted_delivery_to_a_no_op_without_throwing()
+    {
+        // The v0.1.0 public ABI: (HttpClient, options, diagnostics, signer?, observer?). It must
+        // remain a real overload so a 0.1.0-compiled consumer binds at runtime, and an exhausted
+        // delivery through it must fall back to a no-op sink rather than throw.
+        var handler = new StubHttpMessageHandler(StubHttpMessageHandler.Status(HttpStatusCode.BadRequest));
+        using var diagnostics = new WebhookDiagnostics();
+        var dispatcher = new WebhookDispatcher(
+            new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan },
+            new WebhookDeliveryOptions { MaxAttempts = 1 },
+            diagnostics,
+            signer: null,
+            observer: null);
+
+        var result = await dispatcher.DispatchAsync(Message());
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(1, result.Attempts);
+        Assert.Equal(400, result.StatusCode);
+    }
+
+    [Fact]
+    public async Task InMemory_sink_evicts_the_oldest_entry_beyond_capacity()
+    {
+        // A bounded sink must not grow without limit: writing past Capacity drops oldest-first.
+        var sink = new InMemoryDeadLetterSink(capacity: 2);
+        var failure = WebhookDeliveryResult.Failure(1, 500, null);
+
+        await sink.WriteAsync(new DeadLetterEntry(Message("first"), failure, FixedNow));
+        await sink.WriteAsync(new DeadLetterEntry(Message("second"), failure, FixedNow));
+        await sink.WriteAsync(new DeadLetterEntry(Message("third"), failure, FixedNow));
+
+        Assert.Equal(2, sink.Count);
+        Assert.Equal(2, sink.Capacity);
+        Assert.Equal("second", sink.Entries[0].Message.EventId);
+        Assert.Equal("third", sink.Entries[1].Message.EventId);
+    }
+
+    [Fact]
+    public void InMemory_sink_rejects_a_non_positive_capacity()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new InMemoryDeadLetterSink(capacity: 0));
+    }
+
+    private static WebhookMessage Message(string eventId) => new()
+    {
+        Endpoint = new Uri("https://example.test/hook"),
+        Body = Encoding.UTF8.GetBytes("{\"event\":\"ping\"}"),
+        EventId = eventId,
+        EventType = "ping",
+    };
+
     private sealed class ThrowingDeadLetterSink : IDeadLetterSink
     {
         public Task WriteAsync(DeadLetterEntry entry, CancellationToken cancellationToken = default) =>

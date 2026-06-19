@@ -17,7 +17,12 @@ public static class OrionRelayServiceCollectionExtensions
     /// Register the webhook dispatcher, its dedicated <see cref="HttpClient"/>, the shared
     /// diagnostics, and a signer built from <paramref name="signingSecret"/>. If a consumer
     /// registers an <see cref="IWebhookDeliveryObserver"/> before resolving the dispatcher it is
-    /// used; otherwise delivery runs without one.
+    /// used; otherwise delivery runs without one. Deliveries that exhaust their attempt budget are
+    /// routed to an <see cref="IDeadLetterSink"/>. The default is the no-op
+    /// <see cref="NullDeadLetterSink"/>, which retains nothing and so cannot grow the process
+    /// working set during a prolonged receiver outage. Register your own sink (for example
+    /// <see cref="InMemoryDeadLetterSink"/> for in-process inspection, or a durable store) before
+    /// the dispatcher resolves to capture abandoned deliveries instead.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="signingSecret">
@@ -39,6 +44,10 @@ public static class OrionRelayServiceCollectionExtensions
 
         services.TryAddSingleton<WebhookDiagnostics>();
 
+        // Default to a no-op sink: a safe, bounded-by-construction default that retains nothing.
+        // The in-memory sink is bounded but still holds bodies, so it is opt-in, not the default.
+        services.TryAddSingleton<IDeadLetterSink>(NullDeadLetterSink.Instance);
+
         if (!string.IsNullOrEmpty(signingSecret))
         {
             services.TryAddSingleton<IWebhookSigner>(new WebhookSigner(signingSecret));
@@ -59,7 +68,8 @@ public static class OrionRelayServiceCollectionExtensions
                 sp.GetRequiredService<WebhookDeliveryOptions>(),
                 sp.GetRequiredService<WebhookDiagnostics>(),
                 sp.GetService<IWebhookSigner>(),
-                sp.GetService<IWebhookDeliveryObserver>());
+                sp.GetService<IWebhookDeliveryObserver>(),
+                sp.GetService<IDeadLetterSink>());
         });
 
         return services;

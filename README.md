@@ -33,6 +33,10 @@ re-derive them per project.
   counters and an attempts-per-delivery histogram, ready for OpenTelemetry.
 - **Fault-safe delivery observer.** An optional hook sees every attempt and every exhausted
   delivery for dead-lettering or alerting; faults it raises never break delivery.
+- **Pluggable dead-letter sink.** Deliveries that exhaust their attempt budget are routed to an
+  `IDeadLetterSink` exactly once, carrying their terminal failure context, so you can persist,
+  alert on, or replay them. The default is a no-op; a bounded `InMemoryDeadLetterSink` with
+  oldest-first eviction is available as an opt-in, and faults the sink raises never break delivery.
 - **One-call DI registration.** `AddOrionRelay` wires a dedicated `HttpClient`, the signer, the
   diagnostics, and the dispatcher, validating your options eagerly.
 - **Multi-targeted.** `net8.0`, `net9.0`, and `net10.0`, with nullable enabled and warnings as errors.
@@ -198,6 +202,84 @@ services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
 The observer is observability only. The dispatcher swallows any exception it raises, so an observer
 outage never breaks delivery. If you register none, a no-op (`NullWebhookDeliveryObserver`) is used.
 
+### Dead-letter sink
+
+When a delivery exhausts its attempt budget, the dispatcher routes it to an `IDeadLetterSink`
+exactly once, after the final failed attempt, so a consumer can persist, alert on, or replay it.
+The sink receives a `DeadLetterEntry` carrying the original message, the terminal
+`WebhookDeliveryResult`, and the instant the delivery was abandoned:
+
+| Member | Type | Notes |
+|--------|------|-------|
+| `Message` | `WebhookMessage` | The message that could not be delivered within its attempt budget. |
+| `Result` | `WebhookDeliveryResult` | The terminal failure result: attempts made, last status, and final transport fault. |
+| `DeadLetteredAt` | `DateTimeOffset` | The instant the delivery was abandoned and routed to the sink. |
+
+`AddOrionRelay` registers the no-op `NullDeadLetterSink` by default, which retains nothing and so
+cannot grow the process working set during a prolonged receiver outage. Register your own sink
+before the dispatcher resolves to capture abandoned deliveries instead. A durable store is the
+right choice for production; for tests, demos, and single-process apps the library ships a bounded
+`InMemoryDeadLetterSink` that retains the most recent entries in arrival order and evicts the
+oldest once full:
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Moongazing.OrionRelay;
+using Moongazing.OrionRelay.Delivery;
+
+// Opt in to the in-memory sink, bounded to the 256 most recent abandoned deliveries.
+services.AddSingleton<IDeadLetterSink>(new InMemoryDeadLetterSink(capacity: 256));
+services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
+```
+
+The capacity argument is optional; the parameterless constructor retains up to
+`InMemoryDeadLetterSink.DefaultCapacity` (1024) entries. Inspect what has been captured through
+`Count` and the oldest-first `Entries` snapshot:
+
+```csharp
+public sealed class FailedDeliveryReport(IDeadLetterSink sink)
+{
+    public void Print()
+    {
+        if (sink is not InMemoryDeadLetterSink inMemory)
+        {
+            return;
+        }
+
+        foreach (var entry in inMemory.Entries)
+        {
+            Console.WriteLine(
+                $"{entry.DeadLetteredAt:o} {entry.Message.EventType} " +
+                $"failed after {entry.Result.Attempts} attempts " +
+                $"(last status: {entry.Result.StatusCode?.ToString() ?? "none"})");
+        }
+    }
+}
+```
+
+To persist or replay instead, implement `IDeadLetterSink` over your own store:
+
+```csharp
+using Moongazing.OrionRelay.Delivery;
+
+public sealed class DurableDeadLetterSink(IDeadLetterStore store) : IDeadLetterSink
+{
+    public async Task WriteAsync(DeadLetterEntry entry, CancellationToken cancellationToken = default)
+    {
+        // Persist for later inspection or redelivery. Keep this resilient: the dispatcher swallows
+        // any fault raised here, so a sink outage cannot turn an already-failed delivery into an
+        // exception for the caller.
+        await store.SaveAsync(entry, cancellationToken);
+    }
+}
+
+services.AddSingleton<IDeadLetterSink, DurableDeadLetterSink>();
+services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
+```
+
+The sink and the delivery observer are complementary: `IWebhookDeliveryObserver.OnExhausted` fires
+first for in-process observability, then the entry is written to the sink for durable capture.
+
 ## Configuration
 
 `WebhookDeliveryOptions` is configured through the `AddOrionRelay` callback and validated eagerly at
@@ -259,7 +341,7 @@ live under `benchmarks/` and run with BenchmarkDotNet. See [benchmarks.md](bench
 ## Versioning
 
 OrionRelay follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The current release
-is `0.1.0`; while on the `0.x` line the public surface may still change between minor versions.
+is `0.2.0`; while on the `0.x` line the public surface may still change between minor versions.
 Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Design notes

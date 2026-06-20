@@ -17,7 +17,7 @@ public sealed class WebhookDiagnostics : IDisposable
     /// <summary>Create the meter and its instruments.</summary>
     public WebhookDiagnostics()
     {
-        meter = new Meter(MeterName, "0.1.0");
+        meter = new Meter(MeterName, Diagnostics.MeterVersion.Value);
 
         Delivered = meter.CreateCounter<long>(
             "orionrelay.deliveries",
@@ -43,6 +43,9 @@ public sealed class WebhookDiagnostics : IDisposable
 
     /// <summary>Records the attempt count of each completed delivery.</summary>
     public Histogram<int> AttemptsPerDelivery { get; }
+
+    /// <summary>The version stamped on the underlying meter, derived from the assembly version.</summary>
+    internal string? MeterVersion => meter.Version;
 
     /// <inheritdoc />
     public void Dispose() => meter.Dispose();

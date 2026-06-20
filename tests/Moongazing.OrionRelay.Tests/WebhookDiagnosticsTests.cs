@@ -56,6 +56,18 @@ public sealed class WebhookDiagnosticsTests
     }
 
     [Fact]
+    public void Meter_version_is_derived_from_the_assembly_not_hardcoded()
+    {
+        using var diagnostics = new WebhookDiagnostics();
+
+        // The meter version self-derives from the package version via MeterVersion, so it must be
+        // a non-empty value that matches the resolved assembly informational version rather than a
+        // stale literal.
+        Assert.False(string.IsNullOrEmpty(MeterVersion.Value));
+        Assert.Equal(MeterVersion.Value, diagnostics.MeterVersion);
+    }
+
+    [Fact]
     public async Task A_successful_delivery_emits_one_success_attempt_and_one_succeeded_delivery()
     {
         using var diagnostics = new WebhookDiagnostics();

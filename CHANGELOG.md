@@ -66,5 +66,6 @@ Initial release. Outbound webhook delivery.
 18 tests across signing, delivery (success, retry, fatal, exhaustion, transport fault,
 cancellation, observer fault isolation), and registration.
 
+[0.2.1]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.2.1
 [0.2.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.1.0

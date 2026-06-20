@@ -6,6 +6,17 @@ All notable changes to OrionRelay are documented in this file. The format is bas
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-06-20
+
+### Performance
+
+- `WebhookSigner.Sign` no longer allocates a separate preimage byte array per call. The
+  `"<unix-seconds>.<body>"` preimage is assembled into a pooled buffer (cleared on return) and the
+  signature hex is written directly in lowercase rather than allocating an uppercase string and then
+  lowercasing it. The signature wire format is byte-for-byte identical. On the per-delivery signing
+  path this cuts allocations from a body-size-dependent ~680 B (64 B body) / ~1640 B (1 KB body) to a
+  constant 184 B, with a measured 8 to 11 percent throughput improvement.
+
 ## [0.2.1] - 2026-06-20
 
 ### Changed

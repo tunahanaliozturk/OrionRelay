@@ -30,9 +30,25 @@ public readonly struct WebhookVerificationResult : IEquatable<WebhookVerificatio
         new(isValid: true, WebhookVerificationFailure.None);
 
     /// <summary>A failed verification carrying the reason it was rejected.</summary>
-    /// <param name="failure">The non-<see cref="WebhookVerificationFailure.None"/> reason.</param>
-    internal static WebhookVerificationResult Invalid(WebhookVerificationFailure failure) =>
-        new(isValid: false, failure);
+    /// <param name="failure">
+    /// The concrete rejection reason. Must not be <see cref="WebhookVerificationFailure.None"/>,
+    /// which is reserved for a valid result; an invalid result must always name why it was rejected.
+    /// </param>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="failure"/> is <see cref="WebhookVerificationFailure.None"/>.
+    /// </exception>
+    internal static WebhookVerificationResult Invalid(WebhookVerificationFailure failure)
+    {
+        if (failure == WebhookVerificationFailure.None)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(failure),
+                failure,
+                "An invalid result must carry a concrete failure reason, not None.");
+        }
+
+        return new(isValid: false, failure);
+    }
 
     /// <inheritdoc />
     public bool Equals(WebhookVerificationResult other) =>

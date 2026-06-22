@@ -238,6 +238,60 @@ public sealed class WebhookVerifierTests
         Assert.True(a == b);
     }
 
+    [Fact]
+    public void The_invalid_factory_rejects_None_as_a_failure_reason()
+    {
+        // An invalid result must always name a concrete reason. None is reserved for a valid result,
+        // so constructing Invalid(None) would produce an inconsistent value (IsValid == false with
+        // Failure == None) and is rejected at the factory instead.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => WebhookVerificationResult.Invalid(WebhookVerificationFailure.None));
+    }
+
+    [Theory]
+    [InlineData(WebhookVerificationFailure.Malformed)]
+    [InlineData(WebhookVerificationFailure.StaleTimestamp)]
+    [InlineData(WebhookVerificationFailure.SignatureMismatch)]
+    public void Every_failing_verification_carries_its_concrete_non_None_reason(
+        WebhookVerificationFailure expected)
+    {
+        // Whatever the cause, a rejected verification reports IsValid == false paired with a concrete,
+        // defined reason, never None. None on a false result would be the inconsistent state the
+        // Invalid factory now forbids; this pins that each real failure path produces exactly its
+        // reason and that the set of reachable reasons is the non-None enum members.
+        var (verifier, header, now) = ArrangeFailure(expected);
+
+        var result = verifier.Verify(header, Body, now);
+
+        Assert.False(result.IsValid);
+        Assert.NotEqual(WebhookVerificationFailure.None, result.Failure);
+        Assert.True(Enum.IsDefined(result.Failure));
+        Assert.Equal(expected, result.Failure);
+    }
+
+    private static (WebhookVerifier Verifier, string Header, DateTimeOffset Now) ArrangeFailure(
+        WebhookVerificationFailure failure)
+    {
+        var goodHeader = new WebhookSigner(Secret).Sign(Body, At);
+
+        return failure switch
+        {
+            // Header cannot be parsed into the t=...,v1=... shape.
+            WebhookVerificationFailure.Malformed =>
+                (new WebhookVerifier(Secret), "not-a-signature", At),
+
+            // Parsed, but the timestamp falls outside the freshness window.
+            WebhookVerificationFailure.StaleTimestamp =>
+                (new WebhookVerifier(Secret, TimeSpan.FromMinutes(5)), goodHeader, At.AddMinutes(10)),
+
+            // Parsed and fresh, but the recomputed MAC does not match.
+            WebhookVerificationFailure.SignatureMismatch =>
+                (new WebhookVerifier(Secret), FlipLastHexDigit(goodHeader), At),
+
+            _ => throw new ArgumentOutOfRangeException(nameof(failure), failure, "Unhandled reason."),
+        };
+    }
+
     private static string FlipLastHexDigit(string header)
     {
         var last = header[^1];

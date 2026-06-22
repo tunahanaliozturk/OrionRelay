@@ -60,8 +60,10 @@ public sealed class OrderEvents(IWebhookDispatcher dispatcher)
 
 When you supply a signing secret, every attempt carries an `Orion-Signature` header of the form
 `t=<unix-seconds>,v1=<hex-hmac>`. The HMAC-SHA256 is taken over `<unix-seconds>.<body>`, so the
-timestamp is bound into the signature. A receiver verifies by recomputing the MAC and rejecting
-requests whose timestamp is outside its freshness window, which stops replays.
+timestamp is bound into the signature. On the receiving end, `WebhookVerifier` recomputes the MAC
+over the same canonical preimage, rejects requests whose timestamp is outside its freshness window
+(which stops replays), and compares in constant time, returning a structured
+`WebhookVerificationResult` rather than throwing.
 
 ### Retry and backoff
 

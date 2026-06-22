@@ -5,10 +5,11 @@ Version milestones below are targets, not promises; items can move, merge, slip,
 shipped surface is described in [FEATURES.md](FEATURES.md), and real changes are recorded in
 [CHANGELOG.md](../CHANGELOG.md).
 
-OrionRelay is at `0.2.2`: it signs an outbound webhook, sends it over a dedicated `HttpClient`,
+OrionRelay is at `0.3.0`: it signs an outbound webhook, sends it over a dedicated `HttpClient`,
 retries transient failures with equal-jitter backoff, routes terminal failures to a pluggable
-dead-letter sink, and exposes per-attempt metrics. The near-term goal is to close the gaps a real
-delivery pipeline hits, durable parking and receiver-side verification first, then settle the public
+dead-letter sink, exposes per-attempt metrics, and ships a receiver-side verifier so a consumer can
+authenticate an incoming webhook without hand-rolling the HMAC check. The near-term goal is to close
+the remaining gaps a real delivery pipeline hits, durable parking next, then settle the public
 surface before stabilising it. If something below matters to you, open an issue and say so. Demand
 from real workloads is what moves an idea up the list.
 
@@ -44,6 +45,12 @@ below stays free of done work; the authoritative per-release detail is in
 - **Allocation-free HMAC signing** (`0.2.2`). The signing preimage is assembled into a pooled buffer
   and the signature hex is written directly in lowercase, cutting per-delivery signing allocations to
   a constant 184 B. The wire format is byte-for-byte identical.
+- **Receiver-side verifier** (`0.3.0`). `WebhookVerifier` recomputes the MAC over the same canonical
+  preimage the signer uses (shared through an internal `SignatureScheme`, so the two cannot drift),
+  enforces a configurable freshness window in both directions to reject replays, and compares in
+  constant time. `Verify` returns a structured `WebhookVerificationResult` naming the failure
+  (`Malformed`, `StaleTimestamp`, `SignatureMismatch`) rather than throwing. Same `t=...,v1=...`
+  contract, no new scheme. Receivers no longer copy the illustrative snippet from the README.
 
 ---
 
@@ -52,20 +59,17 @@ below stays free of done work; the authoritative per-release detail is in
 Grouped by the next few `0.x` milestones. Ordering reflects what a delivery pipeline needs first,
 not difficulty.
 
-### 0.3.0 - Durable parking and receiver-side verification (target Q3 2026)
+### Durable parking (target Q3 2026)
 
-The two gaps a production deployment hits first. The dead-letter sink is pluggable today, but the
-only sink that ships loses its entries on restart, and a receiver still has to hand-roll the HMAC
-check shown in the README.
+The receiver-side verifier half of the original 0.3.0 pairing shipped in `0.3.0` (see Released
+above). The other half is still planned: the dead-letter sink is pluggable today, but the only sink
+that ships loses its entries on restart.
 
-- **A shipped receiver-side verifier.** A small, allocation-conscious verification helper that
-  recomputes the MAC over the raw body, enforces a freshness window, and compares in constant time,
-  so receivers stop copying the illustrative snippet from the README. Same `t=...,v1=...` contract,
-  no new scheme.
 - **A durable dead-letter store reference.** A documented `IDeadLetterSink` implementation over
   durable storage (the obvious first target being a relational table) so abandoned deliveries
   survive a restart. The sink contract already carries everything a store needs; this fills the
-  in-memory-only gap without widening the interface.
+  in-memory-only gap without widening the interface. It lands in a separate persistence package
+  rather than the core package, so core stays dependency-light.
 
 ### 0.4.0 - Replay and per-endpoint resilience (target Q4 2026)
 

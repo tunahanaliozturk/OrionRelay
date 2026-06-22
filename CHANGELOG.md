@@ -6,6 +6,43 @@ All notable changes to OrionRelay are documented in this file. The format is bas
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-22
+
+### Added
+
+- `IWebhookVerifier` / `WebhookVerifier`: a first-class receiver-side verifier, the counterpart to
+  `WebhookSigner`. It recomputes the HMAC-SHA256 over the same canonical `<unix-seconds>.<body>`
+  preimage the signer uses, enforces a configurable freshness window on the bound timestamp to
+  reject replays and clock-skewed requests in either direction, and compares signatures in constant
+  time via `CryptographicOperations.FixedTimeEquals`. Receivers no longer need to copy the
+  illustrative HMAC check from the README.
+- `WebhookVerificationResult` / `WebhookVerificationFailure`: `Verify` returns a value, not an
+  exception, carrying whether the signature is valid and, when not, the single specific reason
+  (`Malformed`, `StaleTimestamp`, or `SignatureMismatch`) so a receiver can branch per cause. The
+  freshness window is set per verifier instance and defaults to `WebhookVerifier.DefaultTolerance`
+  (5 minutes); the timestamp is gated before the MAC is computed.
+- `SignatureScheme` (internal): the wire-format tokens and the canonical preimage now live in one
+  place that both the signer and the verifier compute against, so the two sides cannot drift. The
+  signer was refactored onto it with no change to the emitted bytes; the `t=<unix>,v1=<hex>` wire
+  format is unchanged and existing signatures verify as before.
+
+### Tests
+
+- Added round-trip coverage that verifies signatures produced by the actual `WebhookSigner`
+  (valid signature accepted; tampered body, wrong secret, and flipped signature byte rejected as
+  `SignatureMismatch`; timestamps outside the window in either direction rejected as
+  `StaleTimestamp`; inclusive window boundary; zero-tolerance exact-second window; malformed headers
+  rejected as `Malformed`, including a wrong-length, non-hex, uppercase-hex, wrong-scheme-token, or
+  multi-segment MAC; empty-body round trip; staleness decided before the signature; constant-time
+  comparison over the shared-scheme MAC). The signer's existing wire-contract tests continue to pin
+  byte-for-byte output after the refactor.
+
+### Notes
+
+- The durable dead-letter store referenced for `0.3.0` on the roadmap is still planned: it would
+  introduce a new persistence package and is out of scope for this release, which ships the verifier
+  into the existing core package only.
+
 ## [0.2.2] - 2026-06-20
 
 ### Performance
@@ -77,6 +114,8 @@ Initial release. Outbound webhook delivery.
 18 tests across signing, delivery (success, retry, fatal, exhaustion, transport fault,
 cancellation, observer fault isolation), and registration.
 
+[0.3.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.3.0
+[0.2.2]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.2.2
 [0.2.1]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.2.1
 [0.2.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.1.0

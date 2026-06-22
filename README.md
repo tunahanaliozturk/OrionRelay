@@ -122,43 +122,38 @@ When a signing secret is configured, every request carries an `Orion-Signature` 
 `t=<unix-seconds>,v1=<hex-hmac>`. The HMAC-SHA256 is taken over `<unix-seconds>.<body>`, so the
 timestamp is bound into the MAC. A receiver verifies by recomputing the MAC over the exact raw body
 it received and rejecting requests whose timestamp falls outside a freshness window, which stops
-replays. The library ships the sender-side `WebhookSigner`; the receiver below is illustrative and
-uses only the same HMAC contract.
+replays.
+
+`WebhookVerifier` is the receiver-side counterpart to `WebhookSigner`. It recomputes the MAC over
+the same canonical preimage the signer uses, enforces the freshness window in both directions, and
+compares in constant time. `Verify` returns a `WebhookVerificationResult` rather than throwing, so a
+receiver can branch on the specific reason a request was rejected.
 
 ```csharp
-using System.Globalization;
-using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
+using Moongazing.OrionRelay.Signing;
 
-public static bool VerifySignature(
-    string signatureHeader, byte[] rawBody, string secret, TimeSpan tolerance)
+// Construct once with the shared secret and a freshness window, then reuse.
+var verifier = new WebhookVerifier(secret, tolerance: TimeSpan.FromMinutes(5));
+
+// In the request handler, verify against the raw body bytes exactly as received.
+var result = verifier.Verify(signatureHeader, rawBody, now: DateTimeOffset.UtcNow);
+if (!result.IsValid)
 {
-    // Header: "t=<unix-seconds>,v1=<hex-hmac>"
-    var parts = signatureHeader.Split(',');
-    var timestamp = parts[0]["t=".Length..];
-    var sentMac = parts[1]["v1=".Length..];
-
-    var unixSeconds = long.Parse(timestamp, CultureInfo.InvariantCulture);
-    var sentAt = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
-    if (DateTimeOffset.UtcNow - sentAt > tolerance)
+    return result.Failure switch
     {
-        return false; // outside the freshness window: reject as a possible replay
-    }
-
-    var signed = Encoding.UTF8.GetBytes($"{unixSeconds}.")
-        .Concat(rawBody)
-        .ToArray();
-    var expected = Convert.ToHexString(
-        HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), signed)).ToLowerInvariant();
-
-    // Constant-time compare to avoid leaking the MAC through timing.
-    return CryptographicOperations.FixedTimeEquals(
-        Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(sentMac));
+        // Header could not be parsed, or the timestamp is outside the window: reject the request.
+        WebhookVerificationFailure.Malformed => Results.BadRequest(),
+        WebhookVerificationFailure.StaleTimestamp => Results.StatusCode(StatusCodes.Status408RequestTimeout),
+        // The signature did not match: treat as unauthorized.
+        _ => Results.Unauthorized(),
+    };
 }
+
+// Signature authentic and fresh: process the event.
 ```
 
-Verify against the raw bytes exactly as received, before any deserialization reshapes them.
+Verify against the raw bytes exactly as received, before any deserialization reshapes them. The
+default freshness window is `WebhookVerifier.DefaultTolerance` (5 minutes) when you do not pass one.
 The sender side of this contract is `IWebhookSigner.Sign(ReadOnlySpan<byte> body, DateTimeOffset timestamp)`.
 
 ### Retries and backoff

@@ -5,9 +5,10 @@ using System.Text;
 using Moongazing.OrionRelay.Signing;
 
 /// <summary>
-/// Shows the receiver side of the same HMAC contract: recompute the MAC over the exact raw body,
-/// compare in constant time, and reject (a) a tampered payload, (b) a tampered signature, and
-/// (c) a stale timestamp outside the freshness window (replay protection).
+/// Shows the receiver side of the same HMAC contract using the shipped <see cref="WebhookVerifier"/>:
+/// it recomputes the MAC over the exact raw body, compares in constant time, and rejects (a) a
+/// tampered payload, (b) a tampered signature, and (c) a stale timestamp outside the freshness window
+/// (replay protection). No hand-rolled crypto on the receiver; the library ships it now.
 /// </summary>
 internal static class VerificationDemo
 {
@@ -22,44 +23,51 @@ internal static class VerificationDemo
         var sentAt = DateTimeOffset.UtcNow;
         var header = signer.Sign(body, sentAt);
         var tolerance = TimeSpan.FromMinutes(5);
+        var verifier = new WebhookVerifier(SigningDemo.Secret, tolerance);
 
         DemoConsole.Item("Orion-Signature", header);
         DemoConsole.Item("Freshness window", $"+/- {tolerance.TotalMinutes:0} min");
 
         DemoConsole.Section("Genuine request, untouched body");
-        Report(WebhookSignatureVerifier.Verify(header, body, SigningDemo.Secret, tolerance, sentAt));
+        Report(verifier.Verify(header, body, sentAt));
 
         DemoConsole.Section("Tampered payload (one byte flipped after signing)");
         var tamperedBody = (byte[])body.Clone();
         tamperedBody[^2] ^= 0x01; // flip a bit in the original amount digit region
         DemoConsole.Note($"Received body: {Encoding.UTF8.GetString(tamperedBody)}");
-        Report(WebhookSignatureVerifier.Verify(header, tamperedBody, SigningDemo.Secret, tolerance, sentAt));
+        Report(verifier.Verify(header, tamperedBody, sentAt));
 
         DemoConsole.Section("Tampered signature (attacker forged the hex MAC)");
         var forged = header[..^1] + (header[^1] == '0' ? '1' : '0');
-        Report(WebhookSignatureVerifier.Verify(forged, body, SigningDemo.Secret, tolerance, sentAt));
+        Report(verifier.Verify(forged, body, sentAt));
 
         DemoConsole.Section("Replay: valid signature but stale timestamp");
         var verifyMuchLater = sentAt + tolerance + TimeSpan.FromMinutes(1);
         DemoConsole.Note($"Receiver clock is {(verifyMuchLater - sentAt).TotalMinutes:0} min past the send time.");
-        Report(WebhookSignatureVerifier.Verify(header, body, SigningDemo.Secret, tolerance, verifyMuchLater));
+        Report(verifier.Verify(header, body, verifyMuchLater));
     }
 
-    private static void Report(WebhookSignatureVerifier.Outcome outcome)
+    private static void Report(WebhookVerificationResult result)
     {
-        switch (outcome)
+        if (result.IsValid)
         {
-            case WebhookSignatureVerifier.Outcome.Valid:
-                DemoConsole.Ok("Signature valid, timestamp fresh: accept and process.");
-                break;
-            case WebhookSignatureVerifier.Outcome.BadSignature:
+            DemoConsole.Ok("Signature valid, timestamp fresh: accept and process.");
+            return;
+        }
+
+        switch (result.Failure)
+        {
+            case WebhookVerificationFailure.SignatureMismatch:
                 DemoConsole.Reject("Recomputed MAC did not match: refuse the request.");
                 break;
-            case WebhookSignatureVerifier.Outcome.Stale:
+            case WebhookVerificationFailure.StaleTimestamp:
                 DemoConsole.Reject("Timestamp outside freshness window: refuse as a possible replay.");
                 break;
-            case WebhookSignatureVerifier.Outcome.Malformed:
+            case WebhookVerificationFailure.Malformed:
                 DemoConsole.Reject("Signature header malformed: refuse the request.");
+                break;
+            case WebhookVerificationFailure.None:
+            default:
                 break;
         }
     }

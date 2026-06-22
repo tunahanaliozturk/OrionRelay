@@ -61,9 +61,28 @@ string Sign(ReadOnlySpan<byte> body, DateTimeOffset timestamp);
   (default `Orion-Signature`) when a signer is configured.
 
 Because the timestamp is part of the signed input, a receiver that enforces a freshness window can
-reject captured-and-replayed requests. The receiver recomputes the MAC over the raw body it received
-and compares in constant time. See the README "Signature verification on the receiver" section for a
-worked receiver-side example.
+reject captured-and-replayed requests.
+
+`IWebhookVerifier` / `WebhookVerifier` are the receiver-side counterpart, so a consumer no longer
+hand-rolls the check:
+
+```csharp
+WebhookVerificationResult Verify(string signatureHeader, ReadOnlySpan<byte> body, DateTimeOffset now);
+```
+
+- Recomputes the MAC over the same canonical `<unix-seconds>.<body>` preimage the signer uses
+  (shared through an internal `SignatureScheme`, so signer and verifier cannot drift), then compares
+  in constant time with `CryptographicOperations.FixedTimeEquals`.
+- Enforces a configurable freshness window in both directions (too old, or future-skewed) before the
+  MAC is computed, rejecting replays. The window is set per instance; the default is
+  `WebhookVerifier.DefaultTolerance` (5 minutes).
+- Returns a `WebhookVerificationResult` rather than throwing: `IsValid`, plus a
+  `WebhookVerificationFailure` (`None`, `Malformed`, `StaleTimestamp`, `SignatureMismatch`) naming
+  the single reason a request was rejected. An empty or null secret is rejected with
+  `ArgumentException`; a negative tolerance with `ArgumentOutOfRangeException`.
+
+Verify against the raw bytes exactly as received, before any deserialization reshapes them. See the
+README "Signature verification on the receiver" section for a worked handler example.
 
 ---
 

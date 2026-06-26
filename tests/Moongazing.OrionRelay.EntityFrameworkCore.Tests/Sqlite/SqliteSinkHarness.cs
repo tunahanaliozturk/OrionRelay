@@ -31,6 +31,19 @@ internal sealed class SqliteSinkHarness : IAsyncDisposable
     /// </summary>
     public EntityFrameworkCoreDeadLetterSink<OrionRelayDeadLetterDbContext> CreateSink() => new(factory);
 
+    /// <summary>
+    /// A sink whose context factory is wrapped to count the contexts it hands out. The reconciliation
+    /// tests read <see cref="CountingDbContextFactory.Created"/> to prove the duplicate-key path runs
+    /// only when an insert genuinely conflicts: a no-insert update and a first-time insert draw exactly
+    /// one context, while a real key collision draws a second for the reconciling re-read.
+    /// </summary>
+    public (EntityFrameworkCoreDeadLetterSink<OrionRelayDeadLetterDbContext> Sink, CountingDbContextFactory Counter)
+        CreateCountingSink()
+    {
+        var counter = new CountingDbContextFactory(factory);
+        return (new(counter), counter);
+    }
+
     /// <summary>Create the harness and its schema. The returned harness is ready to use.</summary>
     public static async Task<SqliteSinkHarness> CreateAsync()
     {

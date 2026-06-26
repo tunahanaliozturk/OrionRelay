@@ -195,6 +195,152 @@ public sealed class SqliteDeadLetterSinkTests
         Assert.Equal("z", Encoding.UTF8.GetString(record.Body));
     }
 
+    [Fact]
+    public async Task free_form_fields_longer_than_the_old_column_cap_are_stored_intact()
+    {
+        await using var harness = await SqliteSinkHarness.CreateAsync();
+        var sink = harness.CreateSink();
+
+        // Every free-form value the sink copies verbatim, sized well past the former 256-char cap. A
+        // configured cap shorter than the source would truncate or reject these on a real provider, so
+        // storing them whole is the contract: an abandoned delivery is held exactly as received.
+        var longEventId = "evt-" + new string('e', 600);
+        var longEventType = "type." + new string('t', 600);
+        var longContentType = "application/vnd.orion+json; profile=\"" + new string('p', 600) + "\"";
+        var longEndpoint = "https://receiver.test/hook?token=" + new string('q', 1500);
+        var longError = new string('x', 4000);
+
+        var message = new WebhookMessage
+        {
+            Endpoint = new Uri(longEndpoint),
+            Body = Encoding.UTF8.GetBytes("{\"ok\":true}"),
+            ContentType = longContentType,
+            EventId = longEventId,
+            EventType = longEventType,
+        };
+        var result = WebhookDeliveryResult.Failure(
+            attempts: 9,
+            statusCode: null,
+            finalException: new HttpRequestException(longError));
+        await sink.WriteAsync(new DeadLetterEntry(message, result, AbandonedAt));
+
+        var record = Assert.Single(await sink.GetHeldAsync());
+        Assert.Equal(longEventId, record.DeliveryId);
+        Assert.Equal(longEventId, record.EventId);
+        Assert.Equal(longEventType, record.EventType);
+        Assert.Equal(longContentType, record.ContentType);
+        Assert.Equal(longEndpoint, record.Endpoint);
+        Assert.Equal(longError, record.FinalError);
+    }
+
+    [Fact]
+    public async Task free_form_columns_are_not_capped_while_the_key_stays_bounded()
+    {
+        // SQLite does not enforce column length at the storage layer, so a round-trip alone cannot
+        // prove the cap was lifted; the cap lives in the EF model and is what truncates or rejects on a
+        // real provider. Assert it directly on the model metadata: the free-form columns the sink
+        // copies verbatim carry no max length, while the primary key stays bounded so it remains
+        // index-friendly on every provider.
+        await using var harness = await SqliteSinkHarness.CreateAsync();
+        await using var context = await harness.Factory.CreateDbContextAsync();
+
+        var entity = context.Model.FindEntityType(typeof(DeadLetterRecord))!;
+
+        Assert.Null(entity.FindProperty(nameof(DeadLetterRecord.ContentType))!.GetMaxLength());
+        Assert.Null(entity.FindProperty(nameof(DeadLetterRecord.EventType))!.GetMaxLength());
+        Assert.Null(entity.FindProperty(nameof(DeadLetterRecord.EventId))!.GetMaxLength());
+        Assert.Null(entity.FindProperty(nameof(DeadLetterRecord.Endpoint))!.GetMaxLength());
+
+        var keyLength = entity.FindProperty(nameof(DeadLetterRecord.DeliveryId))!.GetMaxLength();
+        Assert.NotNull(keyLength);
+        Assert.True(keyLength >= 256, "The key must stay bounded but generous enough for any realistic id.");
+    }
+
+    [Fact]
+    public async Task a_first_time_write_does_not_run_the_reconciliation_path()
+    {
+        await using var harness = await SqliteSinkHarness.CreateAsync();
+        var (sink, counter) = harness.CreateCountingSink();
+
+        // A first insert cannot collide, so reconciliation must not run. The sink draws exactly one
+        // context for the operation; a second would mean the duplicate-key re-read fired needlessly.
+        await sink.WriteAsync(Entry("evt-first", "https://receiver.test/first", "body"));
+
+        Assert.Equal(1, counter.Created);
+        Assert.Equal(1, await sink.CountAsync());
+    }
+
+    [Fact]
+    public async Task an_idempotent_update_re_route_does_not_run_the_reconciliation_path()
+    {
+        await using var harness = await SqliteSinkHarness.CreateAsync();
+
+        // Seed the row through a separate sink so the counted sink starts clean.
+        await harness.CreateSink().WriteAsync(Entry("evt-upd", "https://receiver.test/upd", "v1"));
+
+        var (sink, counter) = harness.CreateCountingSink();
+
+        // The id is already parked, so this re-route is an in-place update: no insert is attempted and
+        // the no-insert path must not walk reconciliation. One context for the read-and-update, no more.
+        await sink.WriteAsync(Entry("evt-upd", "https://receiver.test/upd", "v2", attempts: 7));
+
+        Assert.Equal(1, counter.Created);
+        var record = Assert.Single(await sink.GetHeldAsync());
+        Assert.Equal("v2", Encoding.UTF8.GetString(record.Body));
+        Assert.Equal(7, record.Attempts);
+    }
+
+    [Fact]
+    public async Task a_non_duplicate_failure_on_the_insert_path_surfaces()
+    {
+        await using var harness = await CheckConstraintSinkHarness.CreateAsync();
+        var sink = harness.CreateSink();
+
+        // A negative attempt count violates the table's CHECK constraint. This is a genuine,
+        // non-duplicate save failure on an insert: the row is absent on the reconciling re-read, so the
+        // failure is not a key collision and must surface rather than be swallowed as a re-route.
+        var message = new WebhookMessage
+        {
+            Endpoint = new Uri("https://receiver.test/bad-insert"),
+            Body = Encoding.UTF8.GetBytes("x"),
+            EventId = "evt-bad-insert",
+        };
+        var result = WebhookDeliveryResult.Failure(attempts: -1, statusCode: 500, finalException: null);
+
+        await Assert.ThrowsAsync<DbUpdateException>(
+            () => sink.WriteAsync(new DeadLetterEntry(message, result, AbandonedAt)));
+    }
+
+    [Fact]
+    public async Task a_non_duplicate_failure_on_the_update_path_surfaces_and_is_not_reconciled()
+    {
+        await using var harness = await CheckConstraintSinkHarness.CreateAsync();
+        var sink = harness.CreateSink();
+
+        // Park a valid row first so the next write to the same id takes the in-place update path.
+        var good = new WebhookMessage
+        {
+            Endpoint = new Uri("https://receiver.test/upd-bad"),
+            Body = Encoding.UTF8.GetBytes("v1"),
+            EventId = "evt-upd-bad",
+        };
+        await sink.WriteAsync(new DeadLetterEntry(
+            good, WebhookDeliveryResult.Failure(attempts: 1, statusCode: 500, finalException: null), AbandonedAt));
+
+        // Re-route the same id with a value that fails the CHECK constraint on update. The update path
+        // attempts no insert, so the regression that ran reconciliation on every DbUpdateException would
+        // re-insert and mask the fault; the fix scopes reconciliation to the insert path, so this real
+        // failure propagates unchanged.
+        var bad = new WebhookMessage
+        {
+            Endpoint = new Uri("https://receiver.test/upd-bad"),
+            Body = Encoding.UTF8.GetBytes("v2"),
+            EventId = "evt-upd-bad",
+        };
+        await Assert.ThrowsAsync<DbUpdateException>(() => sink.WriteAsync(new DeadLetterEntry(
+            bad, WebhookDeliveryResult.Failure(attempts: -1, statusCode: 500, finalException: null), AbandonedAt)));
+    }
+
     private static DeadLetterEntry Entry(
         string? eventId,
         string endpoint,

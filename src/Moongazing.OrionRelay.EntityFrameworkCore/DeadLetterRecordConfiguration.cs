@@ -41,17 +41,26 @@ public sealed class DeadLetterRecordConfiguration : IEntityTypeConfiguration<Dea
         builder.ToTable(tableName);
 
         // DeliveryId is the primary key: this is the unique constraint that makes a re-routed
-        // terminal delivery idempotent (the second write resolves to the existing row by key). A
-        // length cap keeps the column index-friendly on providers that will not index an unbounded
-        // string.
+        // terminal delivery idempotent (the second write resolves to the existing row by key). It is
+        // the one column that must stay bounded, because a key has to be index-friendly on every
+        // provider (SQL Server, for instance, will not key an unbounded string). 1024 is a generous
+        // cap that holds any realistic EventId and the 32-character surrogate, while staying inside
+        // the relational key-size limits. The original EventId is also preserved uncapped in its own
+        // column below, so nothing the message carried is lost even when it backs the key.
         builder.HasKey(e => e.DeliveryId);
-        builder.Property(e => e.DeliveryId).HasMaxLength(256);
+        builder.Property(e => e.DeliveryId).HasMaxLength(1024);
 
+        // The remaining columns hold free-form values the sink copies verbatim from the abandoned
+        // delivery (the endpoint URL, the payload bytes, the content type, and the two header values).
+        // None of these is a key, and any of them can legitimately exceed a fixed cap (a long signed
+        // URL, a content type with parameters, a custom event type or id), so they are left unbounded
+        // (nvarchar(max) / text). A configured cap shorter than the source would silently truncate on
+        // some providers and throw on others; an abandoned delivery must be stored exactly as received.
         builder.Property(e => e.Endpoint).IsRequired();
         builder.Property(e => e.Body).IsRequired();
-        builder.Property(e => e.ContentType).HasMaxLength(256).IsRequired();
-        builder.Property(e => e.EventType).HasMaxLength(256);
-        builder.Property(e => e.EventId).HasMaxLength(256);
+        builder.Property(e => e.ContentType).IsRequired();
+        builder.Property(e => e.EventType);
+        builder.Property(e => e.EventId);
         builder.Property(e => e.Attempts).IsRequired();
         builder.Property(e => e.DeadLetteredAtTicks).IsRequired();
 

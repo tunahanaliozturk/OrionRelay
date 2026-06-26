@@ -69,14 +69,21 @@ public sealed class EntityFrameworkCoreDeadLetterSink<TContext> : IDeadLetterSin
             .FirstOrDefaultAsync(e => e.DeliveryId == record.DeliveryId, cancellationToken)
             .ConfigureAwait(false);
 
-        if (existing is null)
+        if (existing is not null)
         {
-            context.Add(record);
-        }
-        else
-        {
+            // The id is already parked: this is an in-place update, no insert is attempted, so the
+            // primary key cannot collide and there is no duplicate to reconcile. Any SaveChanges
+            // failure here is a genuine fault (a concurrency conflict, a constraint, a broken
+            // connection) and must surface unchanged rather than be reinterpreted as an idempotent
+            // re-route.
             CopyMutableFields(record, existing);
+            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return;
         }
+
+        // No row was present, so this call inserts. Only an insert can collide with the primary key,
+        // so the duplicate-key reconciliation below is scoped to exactly this path.
+        context.Add(record);
 
         try
         {
@@ -84,11 +91,12 @@ public sealed class EntityFrameworkCoreDeadLetterSink<TContext> : IDeadLetterSin
         }
         catch (DbUpdateException)
         {
-            // A concurrent caller inserted this id first, so our insert hit the primary key's unique
-            // constraint. Confirm that by re-reading on a clean context rather than sniffing a
-            // provider error code (this package references no provider): if the row is now present the
-            // delivery is already parked under this id and the re-route is satisfied; if it is absent
-            // the failure was something else and must surface.
+            // The insert failed. A concurrent caller may have inserted this id first, so our insert hit
+            // the primary key's unique constraint. Confirm that by re-reading on a clean context rather
+            // than sniffing a provider error code (this package references no provider): if the row is
+            // now present the delivery is already parked under this id and the re-route is satisfied; if
+            // it is absent the failure was something else (a missing table, a broken connection) and
+            // must surface.
             await ReconcileConflictAsync(record, cancellationToken).ConfigureAwait(false);
         }
     }

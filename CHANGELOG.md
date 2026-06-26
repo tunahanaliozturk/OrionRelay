@@ -6,6 +6,49 @@ All notable changes to OrionRelay are documented in this file. The format is bas
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-27
+
+### Added
+
+- **New package `OrionRelay.EntityFrameworkCore`.** A durable `IDeadLetterSink` reference
+  implementation over a relational table via Entity Framework Core, so webhook deliveries that
+  exhaust their attempt budget survive a process restart instead of being lost with the
+  in-memory-only sink. It is a new persistence package, not a change to the core: the
+  `IDeadLetterSink` interface is unchanged. The package references
+  `Microsoft.EntityFrameworkCore.Relational` only, so the consumer chooses the database provider.
+- `EntityFrameworkCoreDeadLetterSink<TContext>`: persists each `DeadLetterEntry` the dispatcher
+  routes to it as a `DeadLetterRecord` carrying the target endpoint, the payload, the content type
+  and event headers, the attempt count, the last HTTP status, the final transport error message, and
+  the abandonment timestamp. The write is idempotent on the delivery id (the message `EventId` when
+  set, otherwise a surrogate): `DeliveryId` is the primary key, so a re-routed replayed terminal
+  delivery updates the existing row rather than inserting a duplicate, and a concurrent first insert
+  is reconciled by re-reading the row rather than by sniffing a provider-specific SQL error code.
+- `DeadLetterRecord`, `DeadLetterRecordConfiguration`, and `OrionRelayDeadLetterDbContext`: the
+  mapped entity, its relational mapping (keyed by `DeliveryId`, with the abandonment timestamp
+  indexed), and a ready-made context. Fold the table into an existing context by applying the
+  configuration in `OnModelCreating` instead of using the bundled context.
+- `EntityFrameworkCoreDeadLetterSink<TContext>.GetHeldAsync` / `CountAsync`: a read-back path for
+  inspection and triage, returning the held deliveries newest abandonment first (with an optional
+  cap). These are additive queries on the concrete store, not additions to the `IDeadLetterSink`
+  interface.
+- `AddOrionRelayEntityFrameworkCoreDeadLetterSink(...)`: registers a context factory and the durable
+  sink as the application's `IDeadLetterSink`, replacing the no-op default that `AddOrionRelay` adds
+  with `TryAdd`, regardless of call order. The concrete store is also resolvable so an operator can
+  reach the inspection queries.
+
+### Tests
+
+- Added integration coverage over real file-based SQLite (genuine relational constraints,
+  transactions, and primary-key enforcement, not EF InMemory): an abandoned delivery is persisted;
+  it is readable through a fresh context after pools are cleared (a simulated restart); re-routing
+  the same terminal delivery lands it once with last-write-wins, including under concurrent racing
+  writers; the inspection query returns held deliveries newest first and honours the limit; the full
+  delivery context (endpoint, payload, headers, attempts, status, abandonment time) round-trips; a
+  transport failure is captured as the final error; a delivery without an `EventId` is held under a
+  surrogate key so each abandonment is retained; and the row is visible through the context's own
+  `DbSet`. Registration tests confirm the durable sink replaces the no-op default in either call
+  order and that the interface and concrete registrations resolve to the same instance.
+
 ## [0.3.0] - 2026-06-22
 
 ### Added
@@ -114,6 +157,7 @@ Initial release. Outbound webhook delivery.
 18 tests across signing, delivery (success, retry, fatal, exhaustion, transport fault,
 cancellation, observer fault isolation), and registration.
 
+[0.4.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.4.0
 [0.3.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.3.0
 [0.2.2]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.2.2
 [0.2.1]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.2.1

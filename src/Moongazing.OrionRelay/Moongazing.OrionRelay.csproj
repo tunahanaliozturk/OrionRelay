@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Moongazing.OrionRelay.Tests" />
+    <InternalsVisibleTo Include="Moongazing.OrionRelay.EntityFrameworkCore.Tests" />
   </ItemGroup>
 </Project>

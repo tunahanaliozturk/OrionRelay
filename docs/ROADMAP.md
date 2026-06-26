@@ -5,11 +5,12 @@ Version milestones below are targets, not promises; items can move, merge, slip,
 shipped surface is described in [FEATURES.md](FEATURES.md), and real changes are recorded in
 [CHANGELOG.md](../CHANGELOG.md).
 
-OrionRelay is at `0.3.0`: it signs an outbound webhook, sends it over a dedicated `HttpClient`,
+OrionRelay is at `0.4.0`: it signs an outbound webhook, sends it over a dedicated `HttpClient`,
 retries transient failures with equal-jitter backoff, routes terminal failures to a pluggable
-dead-letter sink, exposes per-attempt metrics, and ships a receiver-side verifier so a consumer can
-authenticate an incoming webhook without hand-rolling the HMAC check. The near-term goal is to close
-the remaining gaps a real delivery pipeline hits, durable parking next, then settle the public
+dead-letter sink with a durable EF Core store available so abandoned deliveries survive a restart,
+exposes per-attempt metrics, and ships a receiver-side verifier so a consumer can authenticate an
+incoming webhook without hand-rolling the HMAC check. The near-term goal is to close the remaining
+gaps a real delivery pipeline hits, getting parked failures back out next, then settle the public
 surface before stabilising it. If something below matters to you, open an issue and say so. Demand
 from real workloads is what moves an idea up the list.
 
@@ -45,6 +46,14 @@ below stays free of done work; the authoritative per-release detail is in
 - **Allocation-free HMAC signing** (`0.2.2`). The signing preimage is assembled into a pooled buffer
   and the signature hex is written directly in lowercase, cutting per-delivery signing allocations to
   a constant 184 B. The wire format is byte-for-byte identical.
+- **Durable dead-letter store** (`0.4.0`). A documented `IDeadLetterSink` implementation over a
+  relational table via Entity Framework Core (`OrionRelay.EntityFrameworkCore`), so abandoned
+  deliveries survive a process restart instead of being lost with the in-memory-only sink. It fills
+  the durable gap behind the existing seam without widening the interface, persisting the whole
+  abandoned delivery (endpoint, payload, headers, attempt count, final error, timestamps), keyed by
+  delivery id so a re-routed terminal delivery lands once, with a read-back query for triage. It
+  ships as a separate persistence package that references `Microsoft.EntityFrameworkCore.Relational`
+  only, so core stays dependency-light and the consumer picks the provider.
 - **Receiver-side verifier** (`0.3.0`). `WebhookVerifier` recomputes the MAC over the same canonical
   preimage the signer uses (shared through an internal `SignatureScheme`, so the two cannot drift),
   enforces a configurable freshness window in both directions to reject replays, and compares in
@@ -59,19 +68,7 @@ below stays free of done work; the authoritative per-release detail is in
 Grouped by the next few `0.x` milestones. Ordering reflects what a delivery pipeline needs first,
 not difficulty.
 
-### Durable parking (target Q3 2026)
-
-The receiver-side verifier half of the original 0.3.0 pairing shipped in `0.3.0` (see Released
-above). The other half is still planned: the dead-letter sink is pluggable today, but the only sink
-that ships loses its entries on restart.
-
-- **A durable dead-letter store reference.** A documented `IDeadLetterSink` implementation over
-  durable storage (the obvious first target being a relational table) so abandoned deliveries
-  survive a restart. The sink contract already carries everything a store needs; this fills the
-  in-memory-only gap without widening the interface. It lands in a separate persistence package
-  rather than the core package, so core stays dependency-light.
-
-### 0.4.0 - Replay and per-endpoint resilience (target Q4 2026)
+### 0.5.0 - Replay and per-endpoint resilience (target Q4 2026)
 
 Once failures are parked durably, the next questions are getting them back out and not hammering an
 endpoint that is already down.
@@ -86,7 +83,7 @@ endpoint that is already down.
 - **`Retry-After` awareness.** Honour a `Retry-After` header on `429`/`503` responses when computing
   the next backoff delay, rather than ignoring the receiver's own stated cool-off.
 
-### 0.5.0 - Delivery telemetry and dispatch ergonomics (target Q1 2027)
+### 0.6.0 - Delivery telemetry and dispatch ergonomics (target Q1 2027)
 
 Deeper visibility and the dispatch-shape conveniences that repeatedly come up, weighed against
 keeping the surface small.

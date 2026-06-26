@@ -176,6 +176,13 @@ services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
 A sink fault never breaks delivery: the dispatcher swallows any exception `WriteAsync` raises, so a
 sink outage cannot turn an already-failed delivery into a thrown exception for the caller.
 
+For a durable sink that survives a restart, the companion package `OrionRelay.EntityFrameworkCore`
+implements this same `IDeadLetterSink` over a relational table via EF Core (no interface change). It
+persists the whole abandoned delivery, is idempotent on the delivery id when a terminal delivery is
+re-routed, and exposes a read-back query for triage. Register it with
+`AddOrionRelayEntityFrameworkCoreDeadLetterSink(...)` before `AddOrionRelay`; it references only
+`Microsoft.EntityFrameworkCore.Relational`, so the consumer picks the provider.
+
 ---
 
 ## 7. Telemetry

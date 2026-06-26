@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>OrionRelay.EntityFrameworkCore</PackageId>
+    <RootNamespace>Moongazing.OrionRelay.EntityFrameworkCore</RootNamespace>
+    <Description>A durable Entity Framework Core dead-letter sink for OrionRelay. Implements the existing IDeadLetterSink over a relational table, so webhook deliveries that exhaust their attempt budget survive a process restart. Persists the target endpoint, payload, headers, attempt count, final error, and timestamps, is idempotent on the delivery id when a terminal delivery is re-routed, and exposes a query path for inspection and triage. References Microsoft.EntityFrameworkCore.Relational only, so the consumer chooses the database provider.</Description>
+    <PackageTags>webhook;delivery;dead-letter;deadletter;entityframeworkcore;efcore;persistence;orion</PackageTags>
+    <!-- Deliberately NOT IsAotCompatible: this package instantiates a DbContext, and EF Core's
+         runtime pipeline is not trim or NativeAOT safe (IL2026/IL3050). Asserting AOT support here
+         would be a false promise. The pure-abstractions and signing-only Orion packages can claim
+         it; a runtime EF store cannot. -->
+  </PropertyGroup>
+
+  <!--
+    Pin one EF Core major per target framework. EF Core ships a major release aligned to each .NET
+    major, and a higher EF Core major refuses to load on a lower runtime (NU1202), so the version is
+    selected per TFM rather than floated. Microsoft.EntityFrameworkCore.Relational is referenced
+    instead of a concrete provider: this package targets the relational surface (a primary key plus
+    SaveChanges) and lets the consuming application pick the provider (Npgsql, SqlServer, Sqlite, ...).
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <!--
+      Floor is 8.0.10, not 8.0.0: EF Core 8.0.0 drags in Microsoft.Extensions.Caching.Memory 8.0.0,
+      which carries advisory GHSA-qj66-m88j-hmgj (fixed in 8.0.1). The 8.0.10 servicing line
+      references the patched extensions, so the NuGet audit stays clean under TreatWarningsAsErrors.
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="[8.0.10,9.0.0)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="[9.0.0,10.0.0)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="[10.0.0,11.0.0)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Moongazing.OrionRelay\Moongazing.OrionRelay.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Moongazing.OrionRelay.EntityFrameworkCore.Tests" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <!-- Directory.Build.props already packs docs/icon.png to \icon.png for every packable project, so
+         the icon is inherited and must not be re-added. It also packs the repository-root README to
+         \README.md; remove that and pack this package's own README instead so the NuGet page is
+         package specific. -->
+    <None Remove="$(MSBuildProjectDirectory)\..\..\README.md" />
+    <None Include="$(MSBuildProjectDirectory)\docs\README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+</Project>

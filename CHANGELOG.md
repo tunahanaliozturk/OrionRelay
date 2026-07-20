@@ -26,7 +26,7 @@ All notable changes to OrionRelay are documented in this file. The format is bas
   version on the feed; 2.1.12 publishes the fix, so the NuGet audit runs unsuppressed there again and
   will fail the build on any future advisory rather than silently absorbing it.
 
-## [0.4.0] - 2026-06-27
+## [0.4.0] - 2026-07-20
 
 ### Added
 

@@ -6,6 +6,26 @@ All notable changes to OrionRelay are documented in this file. The format is bas
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Pinned `SQLitePCLRaw.bundle_e_sqlite3` to 2.1.12 to clear GHSA-2m69-gcr7-jv3q (High).** The
+  advisory affects the bundled SQLite native library, which
+  `Microsoft.EntityFrameworkCore.Sqlite` -> `Microsoft.Data.Sqlite` -> `SQLitePCLRaw.bundle_e_sqlite3`
+  resolved transitively at 2.1.6 (net8.0), 2.1.10 (net9.0) and 2.1.11 (net10.0). Pinning the bundle
+  lifts `SQLitePCLRaw.core`, `lib.e_sqlite3` and `provider.e_sqlite3` to the patched 2.1.12 on every
+  target framework.
+- **No shipped or released version of OrionRelay is affected.** The vulnerable package reached only
+  `Moongazing.OrionRelay.EntityFrameworkCore.Tests`, a non-packable test project that uses SQLite to
+  exercise real relational constraints. The published `OrionRelay.EntityFrameworkCore` package
+  references `Microsoft.EntityFrameworkCore.Relational` only — it pulls in no SQLite provider and no
+  SQLitePCLRaw — so no consumer of any released version ever received the affected library. Nothing
+  needs to be upgraded downstream.
+- Removed the `NU1903` suppression from the test project. It was added when the advisory had no fixed
+  version on the feed; 2.1.12 publishes the fix, so the NuGet audit runs unsuppressed there again and
+  will fail the build on any future advisory rather than silently absorbing it.
+
 ## [0.4.0] - 2026-06-27
 
 ### Added

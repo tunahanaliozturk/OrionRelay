@@ -5,19 +5,24 @@
     <!--
       CA1707: xunit fact names use snake_case for readability; the no-underscores rule does not apply
       to tests.
-      NU1903: the SQLite provider drags in SQLitePCLRaw.lib.e_sqlite3, whose published release carries
-      a transitive advisory with no fixed version on the feed yet. This is a test-only dependency used
-      to exercise real relational constraints; the shipped package references only
-      EntityFrameworkCore.Relational (no SQLite, no SQLitePCLRaw) and stays clean under the NuGet
-      audit. Scoped to this non-packable test project so production audit is unaffected.
+      NU1903 was previously suppressed here because SQLitePCLRaw.lib.e_sqlite3 had no fixed version on
+      the feed. 2.1.12 now publishes the fix and is pinned below, so the suppression is removed and the
+      NuGet audit is live again for this project.
     -->
-    <NoWarn>$(NoWarn);CA1707;NU1903</NoWarn>
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!--
+      Security pin: GHSA-2m69-gcr7-jv3q (High) in the bundled SQLite native library.
+      Microsoft.EntityFrameworkCore.Sqlite resolves SQLitePCLRaw 2.1.6 (net8.0), 2.1.10 (net9.0) and
+      2.1.11 (net10.0) transitively; this lifts the whole bundle to the patched 2.1.12. Drop this line
+      once the EF Core reference resolves 2.1.12 on its own.
+    -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
   </ItemGroup>
 
   <ItemGroup>

@@ -301,11 +301,11 @@ or any `MeterListener`:
 
 | Instrument | Kind | Tags |
 |------------|------|------|
-| `orionrelay.deliveries` | Counter&lt;long&gt; | `outcome` (`succeeded`/`failed`), `event_type` |
-| `orionrelay.attempts` | Counter&lt;long&gt; | `outcome` (`success`/`retryable`/`fatal`) |
-| `orionrelay.delivery.attempts` | Histogram&lt;int&gt; | `event_type` |
+| `orion.relay.deliveries` | Counter&lt;long&gt; | `orion.outcome` (`succeeded`/`failed`), `event_type` |
+| `orion.relay.attempts` | Counter&lt;long&gt; | `orion.outcome` (`success`/`retryable`/`fatal`) |
+| `orion.relay.delivery.attempts` | Histogram&lt;int&gt; | `event_type` |
 
-`orionrelay.deliveries` counts one per `DispatchAsync` call; `orionrelay.attempts` counts each
+`orion.relay.deliveries` counts one per `DispatchAsync` call; `orion.relay.attempts` counts each
 individual HTTP attempt; the histogram records how many attempts each delivery took. With
 OpenTelemetry:
 

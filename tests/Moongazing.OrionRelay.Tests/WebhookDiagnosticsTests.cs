@@ -4,6 +4,7 @@ using System.Net;
 using System.Text;
 
 using Moongazing.OrionRelay.Delivery;
+using Moongazing.Orion.Abstractions.Diagnostics;
 using Moongazing.OrionRelay.Diagnostics;
 
 using Xunit;
@@ -50,9 +51,9 @@ public sealed class WebhookDiagnosticsTests
         diagnostics.AttemptsPerDelivery.Record(1);
 
         var names = collector.Measurements.Select(m => m.Instrument).ToHashSet(StringComparer.Ordinal);
-        Assert.Contains("orionrelay.deliveries", names);
-        Assert.Contains("orionrelay.attempts", names);
-        Assert.Contains("orionrelay.delivery.attempts", names);
+        Assert.Contains("orion.relay.deliveries", names);
+        Assert.Contains("orion.relay.attempts", names);
+        Assert.Contains("orion.relay.delivery.attempts", names);
     }
 
     [Fact]
@@ -64,7 +65,7 @@ public sealed class WebhookDiagnosticsTests
         // a non-empty value that matches the resolved assembly informational version rather than a
         // stale literal.
         Assert.False(string.IsNullOrEmpty(MeterVersion.Value));
-        Assert.Equal(MeterVersion.Value, diagnostics.MeterVersion);
+        Assert.Equal(MeterVersion.Value, diagnostics.MeterVersionValue);
     }
 
     [Fact]
@@ -76,15 +77,15 @@ public sealed class WebhookDiagnosticsTests
 
         await Build(handler, diagnostics).DispatchAsync(Message());
 
-        var single = Assert.Single(collector.ForInstrument("orionrelay.attempts"));
+        var single = Assert.Single(collector.ForInstrument("orion.relay.attempts"));
         Assert.Equal(1d, single.Value);
-        Assert.Equal("success", single.Tags["outcome"]);
+        Assert.Equal("success", single.Tags[OrionTelemetry.Tags.Outcome]);
 
-        var delivered = Assert.Single(collector.ForInstrument("orionrelay.deliveries"));
-        Assert.Equal("succeeded", delivered.Tags["outcome"]);
+        var delivered = Assert.Single(collector.ForInstrument("orion.relay.deliveries"));
+        Assert.Equal("succeeded", delivered.Tags[OrionTelemetry.Tags.Outcome]);
         Assert.Equal("ping", delivered.Tags["event_type"]);
 
-        var perDelivery = Assert.Single(collector.ForInstrument("orionrelay.delivery.attempts"));
+        var perDelivery = Assert.Single(collector.ForInstrument("orion.relay.delivery.attempts"));
         Assert.Equal(1d, perDelivery.Value);
         Assert.Equal("ping", perDelivery.Tags["event_type"]);
     }
@@ -100,10 +101,10 @@ public sealed class WebhookDiagnosticsTests
 
         await Build(handler, diagnostics).DispatchAsync(Message());
 
-        var outcomes = collector.ForInstrument("orionrelay.attempts").Select(m => m.Tags["outcome"]).ToList();
+        var outcomes = collector.ForInstrument("orion.relay.attempts").Select(m => m.Tags[OrionTelemetry.Tags.Outcome]).ToList();
         Assert.Equal(["retryable", "success"], outcomes);
 
-        var perDelivery = Assert.Single(collector.ForInstrument("orionrelay.delivery.attempts"));
+        var perDelivery = Assert.Single(collector.ForInstrument("orion.relay.delivery.attempts"));
         Assert.Equal(2d, perDelivery.Value);
     }
 
@@ -116,11 +117,11 @@ public sealed class WebhookDiagnosticsTests
 
         await Build(handler, diagnostics).DispatchAsync(Message());
 
-        var attempt = Assert.Single(collector.ForInstrument("orionrelay.attempts"));
-        Assert.Equal("fatal", attempt.Tags["outcome"]);
+        var attempt = Assert.Single(collector.ForInstrument("orion.relay.attempts"));
+        Assert.Equal("fatal", attempt.Tags[OrionTelemetry.Tags.Outcome]);
 
-        var delivered = Assert.Single(collector.ForInstrument("orionrelay.deliveries"));
-        Assert.Equal("failed", delivered.Tags["outcome"]);
+        var delivered = Assert.Single(collector.ForInstrument("orion.relay.deliveries"));
+        Assert.Equal("failed", delivered.Tags[OrionTelemetry.Tags.Outcome]);
     }
 
     [Fact]
@@ -132,14 +133,14 @@ public sealed class WebhookDiagnosticsTests
 
         await Build(handler, diagnostics, new WebhookDeliveryOptions { MaxAttempts = 3 }).DispatchAsync(Message());
 
-        Assert.Equal(3, collector.ForInstrument("orionrelay.attempts").Count);
-        Assert.All(collector.ForInstrument("orionrelay.attempts"), m => Assert.Equal("retryable", m.Tags["outcome"]));
+        Assert.Equal(3, collector.ForInstrument("orion.relay.attempts").Count);
+        Assert.All(collector.ForInstrument("orion.relay.attempts"), m => Assert.Equal("retryable", m.Tags[OrionTelemetry.Tags.Outcome]));
 
-        var perDelivery = Assert.Single(collector.ForInstrument("orionrelay.delivery.attempts"));
+        var perDelivery = Assert.Single(collector.ForInstrument("orion.relay.delivery.attempts"));
         Assert.Equal(3d, perDelivery.Value);
 
-        var delivered = Assert.Single(collector.ForInstrument("orionrelay.deliveries"));
-        Assert.Equal("failed", delivered.Tags["outcome"]);
+        var delivered = Assert.Single(collector.ForInstrument("orion.relay.deliveries"));
+        Assert.Equal("failed", delivered.Tags[OrionTelemetry.Tags.Outcome]);
     }
 
     [Fact]
@@ -151,7 +152,7 @@ public sealed class WebhookDiagnosticsTests
 
         await Build(handler, diagnostics).DispatchAsync(Message(eventType: null));
 
-        var delivered = Assert.Single(collector.ForInstrument("orionrelay.deliveries"));
+        var delivered = Assert.Single(collector.ForInstrument("orion.relay.deliveries"));
         Assert.Equal("(none)", delivered.Tags["event_type"]);
     }
 
@@ -162,12 +163,12 @@ public sealed class WebhookDiagnosticsTests
         using var collector = new MetricCollector(diagnostics);
 
         diagnostics.Delivered.Add(1);
-        Assert.Single(collector.ForInstrument("orionrelay.deliveries"));
+        Assert.Single(collector.ForInstrument("orion.relay.deliveries"));
 
         diagnostics.Dispose();
 
         // After disposal the instrument is dead; a further add publishes nothing more.
         diagnostics.Delivered.Add(1);
-        Assert.Single(collector.ForInstrument("orionrelay.deliveries"));
+        Assert.Single(collector.ForInstrument("orion.relay.deliveries"));
     }
 }

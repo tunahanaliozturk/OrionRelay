@@ -79,9 +79,9 @@ Subscribe to the `Moongazing.OrionRelay` meter:
 
 | Instrument | Kind | Tags |
 |------------|------|------|
-| `orionrelay.deliveries` | Counter | `outcome` (succeeded/failed), `event_type` |
-| `orionrelay.attempts` | Counter | `outcome` (success/retryable/fatal) |
-| `orionrelay.delivery.attempts` | Histogram | `event_type` |
+| `orion.relay.deliveries` | Counter | `orion.outcome` (succeeded/failed), `event_type` |
+| `orion.relay.attempts` | Counter | `orion.outcome` (success/retryable/fatal) |
+| `orion.relay.delivery.attempts` | Histogram | `event_type` |
 
 ### Delivery observer
 

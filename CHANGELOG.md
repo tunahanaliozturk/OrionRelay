@@ -8,6 +8,32 @@ All notable changes to OrionRelay are documented in this file. The format is bas
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-28
+
+### Changed
+
+- **Converged the OpenTelemetry instrumentation onto the frozen `Orion.Abstractions` 1.0 spine.**
+  `WebhookDiagnostics` now derives from `OrionInstrumentation` and names its metrics through
+  `OrionTelemetry`, so OrionRelay shares the family's naming and static-tag conventions. Recording
+  moved behind `RecordAttempt` / `RecordDelivery` methods so multi-tenant / multi-region labels set
+  via `OrionInstrumentation.SetStaticTags` are stamped onto every measurement. References
+  `Orion.Abstractions` 1.0.0 (needs `Microsoft.Extensions.Options` ≥ 9.0.0, already referenced).
+
+  **Breaking (telemetry only): metric and tag names changed.** The meter name is unchanged
+  (`Moongazing.OrionRelay` — subscribers keep working), but the instruments were renamed to the
+  family convention and the outcome tag adopts the frozen key. Update dashboards/alerts:
+
+  | Before | After |
+  | --- | --- |
+  | `orionrelay.deliveries` | `orion.relay.deliveries` |
+  | `orionrelay.attempts` | `orion.relay.attempts` |
+  | `orionrelay.delivery.attempts` | `orion.relay.delivery.attempts` |
+  | tag `outcome` | tag `orion.outcome` |
+
+  The `event_type` tag and every tag value (`succeeded`/`failed`, `success`/`retryable`/`fatal`) are
+  unchanged, as are the public `Delivered` / `Attempts` / `AttemptsPerDelivery` instruments and the
+  `MeterName` constant.
+
 ### Security
 
 - **Pinned `SQLitePCLRaw.bundle_e_sqlite3` to 2.1.12 to clear GHSA-2m69-gcr7-jv3q (High).** The
@@ -177,6 +203,7 @@ Initial release. Outbound webhook delivery.
 18 tests across signing, delivery (success, retry, fatal, exhaustion, transport fault,
 cancellation, observer fault isolation), and registration.
 
+[0.5.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.5.0
 [0.4.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.4.0
 [0.3.0]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.3.0
 [0.2.2]: https://github.com/tunahanaliozturk/OrionRelay/releases/tag/v0.2.2

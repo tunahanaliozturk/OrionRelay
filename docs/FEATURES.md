@@ -192,9 +192,9 @@ re-routed, and exposes a read-back query for triage. Register it with
 
 | Instrument | Kind | Tags |
 |------------|------|------|
-| `orionrelay.deliveries` | `Counter<long>` | `outcome` (`succeeded`/`failed`), `event_type` |
-| `orionrelay.attempts` | `Counter<long>` | `outcome` (`success`/`retryable`/`fatal`) |
-| `orionrelay.delivery.attempts` | `Histogram<int>` | `event_type` |
+| `orion.relay.deliveries` | `Counter<long>` | `orion.outcome` (`succeeded`/`failed`), `event_type` |
+| `orion.relay.attempts` | `Counter<long>` | `orion.outcome` (`success`/`retryable`/`fatal`) |
+| `orion.relay.delivery.attempts` | `Histogram<int>` | `event_type` |
 
 The instance is `IDisposable` (disposing it releases the meter) and is registered as a singleton by
 `AddOrionRelay`. Any OpenTelemetry `MeterProvider` or raw `MeterListener` can subscribe by meter name.

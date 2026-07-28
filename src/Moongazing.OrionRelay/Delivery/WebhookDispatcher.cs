@@ -132,12 +132,12 @@ public sealed class WebhookDispatcher : IWebhookDispatcher
             lastException = outcome.Exception;
             NotifyAttempt(message, attempt, outcome);
 
-            diagnostics.Attempts.Add(1, new KeyValuePair<string, object?>("outcome", outcome.Kind switch
+            diagnostics.RecordAttempt(outcome.Kind switch
             {
                 AttemptKind.Success => "success",
                 AttemptKind.Retryable => "retryable",
                 _ => "fatal",
-            }));
+            });
 
             if (outcome.Kind == AttemptKind.Success)
             {
@@ -258,10 +258,7 @@ public sealed class WebhookDispatcher : IWebhookDispatcher
 
     private void RecordCompletion(WebhookMessage message, int attempts, bool succeeded, KeyValuePair<string, object?> eventTypeTag)
     {
-        diagnostics.Delivered.Add(1,
-            new KeyValuePair<string, object?>("outcome", succeeded ? "succeeded" : "failed"),
-            eventTypeTag);
-        diagnostics.AttemptsPerDelivery.Record(attempts, eventTypeTag);
+        diagnostics.RecordDelivery(succeeded, attempts, eventTypeTag);
     }
 
     private void NotifyAttempt(WebhookMessage message, int attempt, AttemptOutcome outcome) =>

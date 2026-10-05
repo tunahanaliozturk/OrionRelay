@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="645" viewBox="0 0 1200 645">
+  <!--
+    Orion family diagram template. Copy it, keep <defs> and <style>, replace the body.
+    Classes: .step (our code) .ext (backend / external system) .ok (success end) .fail (failure path)
+             .decision (diamond) .note (side remark) .lane (sequence lifeline)
+    Arrows: class="flow" (main path), "flow alt" (alternate / failure path, dashed), "flow back" (response).
+  -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-fail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: "Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif; fill: #1e1b4b; }
+    .title { font-size: 24px; font-weight: 700; }
+    .subtitle { font-size: 14px; fill: #475569; }
+    .label { font-size: 15px; font-weight: 600; }
+    .small { font-size: 12.5px; fill: #475569; }
+    .code { font-family: "Cascadia Code", Consolas, "SF Mono", monospace; font-size: 13px; fill: #3730a3; }
+    .edge { font-size: 12.5px; fill: #334155; }
+    .step { fill: #eef2ff; stroke: #4f46e5; stroke-width: 2; }
+    .ext { fill: #f0f9ff; stroke: #0284c7; stroke-width: 2; }
+    .ok { fill: #ecfdf5; stroke: #059669; stroke-width: 2; }
+    .fail { fill: #fef2f2; stroke: #dc2626; stroke-width: 2; }
+    .decision { fill: #fffbeb; stroke: #d97706; stroke-width: 2; }
+    .note { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; stroke-dasharray: 4 3; }
+    .lane { stroke: #cbd5e1; stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .flow { fill: none; stroke: #64748b; stroke-width: 2; marker-end: url(#arrow); }
+    .flow.alt { stroke: #dc2626; stroke-dasharray: 6 4; marker-end: url(#arrow-fail); }
+    .flow.back { stroke-dasharray: 6 4; }
+    .badge { fill: #4f46e5; }
+    .badge-text { font-size: 12px; font-weight: 700; fill: #ffffff; }
+  </style>
+
+  <rect width="1200" height="645" fill="#ffffff"/>
+
+  <text class="title" x="40" y="52">OrionRelay - packages and how a webhook leaves your app</text>
+  <text class="subtitle" x="40" y="78">AddOrionRelay wires the dispatcher and its collaborators; failed deliveries end in an IDeadLetterSink you choose.</text>
+
+  <!-- row 1: app -> dispatcher -> receiver -->
+  <rect class="step" x="40" y="110" width="240" height="90" rx="14"/>
+  <text class="label" x="160" y="146" text-anchor="middle">Your app</text>
+  <text class="code" x="160" y="172" text-anchor="middle">DispatchAsync(message)</text>
+
+  <path class="flow" d="M280,155 L378,155"/>
+
+  <rect class="step" x="380" y="110" width="300" height="90" rx="14"/>
+  <text class="label" x="530" y="140" text-anchor="middle">WebhookDispatcher</text>
+  <text class="small" x="530" y="162" text-anchor="middle">IWebhookDispatcher, registered by</text>
+  <text class="code" x="530" y="184" text-anchor="middle">AddOrionRelay(secret, configure)</text>
+
+  <path class="flow" d="M680,140 L878,140"/>
+  <text class="edge" x="779" y="131" text-anchor="middle">HTTP POST, signed</text>
+  <path class="flow back" d="M880,182 L682,182"/>
+  <text class="edge" x="781" y="173" text-anchor="middle">status code</text>
+
+  <rect class="ext" x="880" y="110" width="280" height="90" rx="14"/>
+  <text class="label" x="1020" y="140" text-anchor="middle">Receiver endpoint</text>
+  <text class="small" x="1020" y="162" text-anchor="middle">checks Orion-Signature with</text>
+  <text class="code" x="1020" y="184" text-anchor="middle">WebhookVerifier.Verify</text>
+
+  <!-- bus from dispatcher to collaborators -->
+  <path class="flow" style="marker-end: none" d="M530,200 L530,235"/>
+  <path class="flow" style="marker-end: none" d="M146,235 L1054,235"/>
+  <text class="edge" x="540" y="224">uses</text>
+  <path class="flow" d="M146,235 L146,268"/>
+  <path class="flow" d="M373,235 L373,268"/>
+  <path class="flow" d="M600,235 L600,268"/>
+  <path class="flow" d="M827,235 L827,268"/>
+  <path class="flow" d="M1054,235 L1054,268"/>
+
+  <!-- row 2: collaborators -->
+  <rect class="step" x="40" y="270" width="212" height="96" rx="12"/>
+  <text class="label" x="146" y="296" text-anchor="middle">Signer</text>
+  <text class="code" x="146" y="318" text-anchor="middle">WebhookSigner</text>
+  <text class="small" x="146" y="342" text-anchor="middle">HMAC-SHA256, t=...,v1=...</text>
+
+  <rect class="step" x="267" y="270" width="212" height="96" rx="12"/>
+  <text class="label" x="373" y="296" text-anchor="middle">Options</text>
+  <text class="code" x="373" y="318" text-anchor="middle">WebhookDeliveryOptions</text>
+  <text class="small" x="373" y="342" text-anchor="middle">attempts, backoff, timeout</text>
+
+  <rect class="step" x="494" y="270" width="212" height="96" rx="12"/>
+  <text class="label" x="600" y="296" text-anchor="middle">Telemetry</text>
+  <text class="code" x="600" y="318" text-anchor="middle">WebhookDiagnostics</text>
+  <text class="small" x="600" y="342" text-anchor="middle">meter Moongazing.OrionRelay</text>
+
+  <rect class="step" x="721" y="270" width="212" height="96" rx="12"/>
+  <text class="label" x="827" y="296" text-anchor="middle">Observer</text>
+  <text class="code" x="827" y="318" text-anchor="middle">IWebhookDeliveryObserver</text>
+  <text class="small" x="827" y="342" text-anchor="middle">every attempt, every failure</text>
+
+  <rect class="step" x="948" y="270" width="212" height="96" rx="12"/>
+  <text class="label" x="1054" y="296" text-anchor="middle">Dead-letter sink</text>
+  <text class="code" x="1054" y="318" text-anchor="middle">IDeadLetterSink</text>
+  <text class="small" x="1054" y="342" text-anchor="middle">each terminal failure, once</text>
+
+  <!-- sink implementations -->
+  <path class="flow" style="marker-end: none" d="M1054,366 L1054,392"/>
+  <path class="flow" style="marker-end: none" d="M200,392 L1054,392"/>
+  <text class="edge" x="600" y="386" text-anchor="middle">implemented by</text>
+  <path class="flow" d="M200,392 L200,418"/>
+  <path class="flow" d="M540,392 L540,418"/>
+  <path class="flow" d="M940,392 L940,418"/>
+
+  <rect class="step" x="40" y="420" width="320" height="80" rx="12"/>
+  <text class="code" x="200" y="452" text-anchor="middle">NullDeadLetterSink</text>
+  <text class="small" x="200" y="476" text-anchor="middle">the default: keeps nothing</text>
+
+  <rect class="step" x="380" y="420" width="320" height="80" rx="12"/>
+  <text class="code" x="540" y="452" text-anchor="middle">InMemoryDeadLetterSink</text>
+  <text class="small" x="540" y="476" text-anchor="middle">opt-in, bounded (1024), evicts oldest first</text>
+
+  <rect class="step" x="720" y="420" width="440" height="80" rx="12"/>
+  <text class="label" x="940" y="448" text-anchor="middle">OrionRelay.EntityFrameworkCore</text>
+  <text class="code" x="940" y="474" text-anchor="middle">EntityFrameworkCoreDeadLetterSink&lt;TContext&gt;</text>
+
+  <path class="flow" d="M940,500 L940,528"/>
+  <rect class="ext" x="720" y="530" width="440" height="85" rx="12"/>
+  <text class="label" x="940" y="563" text-anchor="middle">Your database</text>
+  <text class="small" x="940" y="587" text-anchor="middle">table OrionRelayDeadLetters, any EF Core relational provider</text>
+
+  <!-- package note -->
+  <rect class="note" x="40" y="530" width="660" height="85" rx="10"/>
+  <text class="small" x="60" y="556">OrionRelay (core package) holds the dispatcher, signer, verifier, options, telemetry,</text>
+  <text class="small" x="60" y="576">observer and the two built-in sinks. OrionRelay.EntityFrameworkCore adds the durable sink;</text>
+  <text class="small" x="60" y="596">it references Microsoft.EntityFrameworkCore.Relational only, so you choose the provider.</text>
+</svg>

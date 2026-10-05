@@ -4,6 +4,7 @@
     <RootNamespace>Moongazing.OrionRelay.EntityFrameworkCore</RootNamespace>
     <Description>A durable Entity Framework Core dead-letter sink for OrionRelay. Implements the existing IDeadLetterSink over a relational table, so webhook deliveries that exhaust their attempt budget survive a process restart. Persists the target endpoint, payload, headers, attempt count, final error, and timestamps, is idempotent on the delivery id when a terminal delivery is re-routed, and exposes a query path for inspection and triage. References Microsoft.EntityFrameworkCore.Relational only, so the consumer chooses the database provider.</Description>
     <PackageTags>webhook;delivery;dead-letter;deadletter;entityframeworkcore;efcore;persistence;orion</PackageTags>
+    <PackageReadmeFile>docs/README.md</PackageReadmeFile>
     <!-- Deliberately NOT IsAotCompatible: this package instantiates a DbContext, and EF Core's
          runtime pipeline is not trim or NativeAOT safe (IL2026/IL3050). Asserting AOT support here
          would be a false promise. The pure-abstractions and signing-only Orion packages can claim
@@ -40,12 +41,7 @@
     <InternalsVisibleTo Include="Moongazing.OrionRelay.EntityFrameworkCore.Tests" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(IsPackable)' == 'true'">
-    <!-- Directory.Build.props already packs docs/icon.png to \icon.png for every packable project, so
-         the icon is inherited and must not be re-added. It also packs the repository-root README to
-         \README.md; remove that and pack this package's own README instead so the NuGet page is
-         package specific. -->
-    <None Remove="$(MSBuildProjectDirectory)\..\..\README.md" />
-    <None Include="$(MSBuildProjectDirectory)\docs\README.md" Pack="true" PackagePath="\" Visible="false" />
+  <ItemGroup>
+    <None Include="docs/README.md" Pack="true" PackagePath="docs/" />
   </ItemGroup>
 </Project>

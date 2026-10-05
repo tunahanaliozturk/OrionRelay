@@ -1,39 +1,30 @@
 # OrionRelay
 
-[![CI/CD](https://github.com/tunahanaliozturk/OrionRelay/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/tunahanaliozturk/OrionRelay/actions/workflows/ci-cd.yml)
-[![NuGet](https://img.shields.io/nuget/v/OrionRelay.svg)](https://www.nuget.org/packages/OrionRelay/)
+Outbound webhook delivery for .NET: HMAC-SHA256 request signing, retries of transient failures with
+equal-jitter exponential backoff, a dead-letter sink for deliveries that fail for good, a
+receiver-side verifier, and OpenTelemetry-ready metrics.
 
-Outbound webhook delivery for .NET. You hand it a payload and an endpoint; it signs the request,
-sends it, and retries transient failures with backoff until it lands or the budget runs out.
-
-Part of the **Orion** family. Usable entirely on its own.
-
-## Why
-
-Delivering a webhook reliably is more than one `HttpClient.PostAsync`. You need request signing
-so receivers can trust the payload, retries that distinguish a transient 503 from a permanent
-400, backoff with jitter so a fleet of senders does not stampede a recovering receiver, and
-telemetry so you can see delivery health. OrionRelay packages those decisions so you do not
-re-derive them per project.
+![WebhookDispatcher flow: sign and POST, 2xx delivers, 408/429/5xx or a transport fault retries after backoff while attempts remain, any other 4xx or a spent budget calls OnExhausted, writes the dead-letter entry and returns a failed result](https://raw.githubusercontent.com/tunahanaliozturk/OrionRelay/main/docs/diagrams/dispatch-retry.png)
 
 ## Install
 
-```
-dotnet add package OrionRelay
-```
+    dotnet add package OrionRelay
+
+Targets `net8.0`, `net9.0` and `net10.0`. The root namespace is `Moongazing.OrionRelay`.
 
 ## Quick start
 
 ```csharp
+using Moongazing.OrionRelay;
+using Moongazing.OrionRelay.Delivery;
+
 services.AddOrionRelay(signingSecret: "whsec_your_shared_secret", o =>
 {
     o.MaxAttempts = 5;
     o.BaseDelay = TimeSpan.FromSeconds(2);
     o.MaxDelay = TimeSpan.FromMinutes(1);
 });
-```
 
-```csharp
 public sealed class OrderEvents(IWebhookDispatcher dispatcher)
 {
     public async Task NotifyAsync(Uri subscriber, byte[] payload, CancellationToken ct)
@@ -48,34 +39,69 @@ public sealed class OrderEvents(IWebhookDispatcher dispatcher)
 
         if (!result.Succeeded)
         {
-            // Persist for later redelivery; result.Attempts / result.StatusCode tell you why.
+            // result.Attempts, result.StatusCode and result.FinalException say why.
         }
     }
 }
 ```
 
-## What it does
+`DispatchAsync` returns a `WebhookDeliveryResult` when the delivery succeeds (2xx), a non-retryable
+status ends it, or the attempt budget is spent. Caller cancellation throws
+`OperationCanceledException` instead.
 
-### Signing
+## Options
 
-When you supply a signing secret, every attempt carries an `Orion-Signature` header of the form
-`t=<unix-seconds>,v1=<hex-hmac>`. The HMAC-SHA256 is taken over `<unix-seconds>.<body>`, so the
-timestamp is bound into the signature. On the receiving end, `WebhookVerifier` recomputes the MAC
-over the same canonical preimage, rejects requests whose timestamp is outside its freshness window
-(which stops replays), and compares in constant time, returning a structured
-`WebhookVerificationResult` rather than throwing.
+`WebhookDeliveryOptions`, validated when `AddOrionRelay` runs (an invalid value throws
+`ArgumentOutOfRangeException` there, not at first send):
 
-### Retry and backoff
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `MaxAttempts` | `4` | Total attempts including the first send. At least 1. |
+| `BaseDelay` | `1s` | Backoff base, doubled each retry. Not negative. |
+| `MaxDelay` | `30s` | Backoff ceiling. Not less than `BaseDelay`. |
+| `RequestTimeout` | `30s` | Per-attempt timeout, enforced by the dispatcher. |
+| `SignatureHeader` | `Orion-Signature` | Header carrying the signature. |
 
-An attempt is retried when it produces a transport fault, a request timeout, or an HTTP
-`408`, `429`, or `5xx`. Any other `4xx` is treated as permanent and fails fast. Backoff is
-exponential from `BaseDelay`, doubled per attempt and clamped to `MaxDelay`, with equal jitter
-(half the computed delay as a floor, the other half randomised) so concurrent senders do not
-retry in lockstep.
+Retried: transport faults, per-attempt timeouts, HTTP `408`, `429` and `5xx`. Any other `4xx` stops
+at once. A null or empty signing secret sends unsigned.
 
-### Telemetry
+## Signing and verification
 
-Subscribe to the `Moongazing.OrionRelay` meter:
+Each attempt carries `Orion-Signature: t=<unix-seconds>,v1=<hex-hmac>`, the HMAC-SHA256 of
+`<unix-seconds>.<body>`. On the receiver, verify the raw body bytes:
+
+```csharp
+using Moongazing.OrionRelay.Signing;
+
+var verifier = new WebhookVerifier(secret, tolerance: TimeSpan.FromMinutes(5));
+var check = verifier.Verify(signatureHeader, rawBody, DateTimeOffset.UtcNow);
+if (!check.IsValid)
+{
+    // check.Failure is Malformed, StaleTimestamp or SignatureMismatch.
+}
+```
+
+`Verify` never throws for a bad request; it compares in constant time and rejects timestamps outside
+the tolerance (default `WebhookVerifier.DefaultTolerance`, 5 minutes) in either direction.
+
+## Failed deliveries
+
+A delivery that ends without success (budget spent or a non-retryable status) is reported once to
+`IWebhookDeliveryObserver.OnExhausted`, then written once to `IDeadLetterSink` as a
+`DeadLetterEntry`. Faults raised by either are swallowed, so they never break delivery.
+
+- Default sink: `NullDeadLetterSink`, keeps nothing.
+- `InMemoryDeadLetterSink`: opt-in, bounded (`DefaultCapacity` 1024), evicts the oldest first.
+- Durable: the `OrionRelay.EntityFrameworkCore` package.
+
+```csharp
+services.AddSingleton<IDeadLetterSink>(new InMemoryDeadLetterSink(capacity: 256));
+services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
+```
+
+## Telemetry
+
+Meter `Moongazing.OrionRelay` (`WebhookDiagnostics.MeterName`):
 
 | Instrument | Kind | Tags |
 |------------|------|------|
@@ -83,18 +109,23 @@ Subscribe to the `Moongazing.OrionRelay` meter:
 | `orion.relay.attempts` | Counter | `orion.outcome` (success/retryable/fatal) |
 | `orion.relay.delivery.attempts` | Histogram | `event_type` |
 
-### Delivery observer
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(m => m.AddMeter(WebhookDiagnostics.MeterName));
+```
 
-Implement `IWebhookDeliveryObserver` and register it before the dispatcher to see every attempt
-and every exhausted delivery (for dead-lettering, alerting, or audit). It is observability only:
-the dispatcher swallows any fault it raises, so an observer outage never breaks delivery.
+## NativeAOT
 
-## Design
+CI publishes a NativeAOT smoke test of the sign and verify round trip with warnings as errors. The
+package does not declare `IsAotCompatible` yet.
 
-- Multi-targets `net8.0`, `net9.0`, `net10.0`.
-- `TreatWarningsAsErrors`, latest analyzers, nullable enabled.
-- The dispatcher enforces its own per-attempt timeout, so its `HttpClient` is left uncapped.
+## Related packages
 
-## License
+- `OrionRelay.EntityFrameworkCore` - durable EF Core dead-letter sink for abandoned deliveries.
+- `Orion.Abstractions` - the family's shared telemetry conventions, referenced by this package.
 
-MIT.
+## Links
+
+- Documentation and full README: https://github.com/tunahanaliozturk/OrionRelay
+- Changelog: https://github.com/tunahanaliozturk/OrionRelay/blob/main/CHANGELOG.md
+- License: MIT

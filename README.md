@@ -1,16 +1,30 @@
 <p align="center">
-  <img src="docs/logo.png" alt="OrionRelay" width="150" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo.png">
+    <img src="docs/icon.png" alt="OrionRelay logo" width="150">
+  </picture>
 </p>
 
 # OrionRelay
 
 [![CI/CD](https://github.com/tunahanaliozturk/OrionRelay/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/tunahanaliozturk/OrionRelay/actions/workflows/ci-cd.yml)
 [![NuGet](https://img.shields.io/nuget/v/OrionRelay.svg)](https://www.nuget.org/packages/OrionRelay/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+![.NET](https://img.shields.io/badge/.NET-8.0%20%7C%209.0%20%7C%2010.0-purple.svg)
 
 Outbound webhook delivery for .NET. You hand it a payload and an endpoint; it signs the request,
 sends it, and retries transient failures with backoff until it lands or the attempt budget runs out.
 
 Part of the **Orion** family. Usable entirely on its own.
+
+![OrionRelay packages: the app calls WebhookDispatcher, which uses the signer, options, telemetry, observer and an IDeadLetterSink; the sink is NullDeadLetterSink, InMemoryDeadLetterSink or the EF Core sink from OrionRelay.EntityFrameworkCore](docs/diagrams/overview.png)
+
+## Packages
+
+| Package | What it adds |
+|---------|--------------|
+| [`OrionRelay`](https://www.nuget.org/packages/OrionRelay/) | The dispatcher, signer, receiver-side verifier, options, telemetry, observer hook and the two built-in dead-letter sinks. |
+| [`OrionRelay.EntityFrameworkCore`](https://www.nuget.org/packages/OrionRelay.EntityFrameworkCore/) | A durable `IDeadLetterSink` over a relational table via EF Core, so abandoned deliveries survive a restart. |
 
 ## Why
 
@@ -31,12 +45,15 @@ re-derive them per project.
   randomises half the delay so concurrent senders do not retry in lockstep.
 - **Per-attempt telemetry.** A `System.Diagnostics.Metrics` meter exposes delivery/attempt
   counters and an attempts-per-delivery histogram, ready for OpenTelemetry.
-- **Fault-safe delivery observer.** An optional hook sees every attempt and every exhausted
-  delivery for dead-lettering or alerting; faults it raises never break delivery.
+- **Receiver-side verification.** `WebhookVerifier` checks the signature and the freshness window in
+  constant time and returns the reason a request was rejected instead of throwing.
+- **Fault-safe delivery observer.** An optional hook sees every attempt and every delivery that ends
+  without success, for alerting or audit; faults it raises never break delivery.
 - **Pluggable dead-letter sink.** Deliveries that exhaust their attempt budget are routed to an
   `IDeadLetterSink` exactly once, carrying their terminal failure context, so you can persist,
   alert on, or replay them. The default is a no-op; a bounded `InMemoryDeadLetterSink` with
-  oldest-first eviction is available as an opt-in, and faults the sink raises never break delivery.
+  oldest-first eviction is available as an opt-in, `OrionRelay.EntityFrameworkCore` adds a durable
+  one, and faults the sink raises never break delivery.
 - **One-call DI registration.** `AddOrionRelay` wires a dedicated `HttpClient`, the signer, the
   diagnostics, and the dispatcher, validating your options eagerly.
 - **Multi-targeted.** `net8.0`, `net9.0`, and `net10.0`, with nullable enabled and warnings as errors.
@@ -45,9 +62,11 @@ re-derive them per project.
 
 ```
 dotnet add package OrionRelay
+dotnet add package OrionRelay.EntityFrameworkCore   # optional: durable dead-letter store
 ```
 
-The NuGet package id is **`OrionRelay`**; the root namespace is `Moongazing.OrionRelay`.
+The NuGet package ids are **`OrionRelay`** and **`OrionRelay.EntityFrameworkCore`**; the root
+namespaces are `Moongazing.OrionRelay` and `Moongazing.OrionRelay.EntityFrameworkCore`.
 
 ## Quick start
 
@@ -89,7 +108,8 @@ public sealed class OrderEvents(IWebhookDispatcher dispatcher)
 }
 ```
 
-`DispatchAsync` returns when delivery succeeds (a 2xx response) or the attempt budget is exhausted.
+`DispatchAsync` returns when delivery succeeds (a 2xx response), a non-retryable status ends it, or
+the attempt budget is exhausted.
 A cancelled token aborts the whole delivery, including backoff waits, and throws
 `OperationCanceledException` rather than returning a failure result.
 
@@ -113,8 +133,8 @@ A cancelled token aborts the whole delivery, including backoff waits, and throws
 |--------|------|-------|
 | `Succeeded` | `bool` | True when a 2xx response arrived within the attempt budget. |
 | `Attempts` | `int` | Attempts made, including the first send. |
-| `StatusCode` | `int?` | Last HTTP status observed, or null if every attempt failed at the transport level. |
-| `FinalException` | `Exception?` | The final transport fault, when delivery ended on one rather than an HTTP error. |
+| `StatusCode` | `int?` | HTTP status of the final attempt, or null when the final attempt failed at the transport level (fault or timeout). |
+| `FinalException` | `Exception?` | The final attempt's transport fault or timeout, when delivery ended on one rather than an HTTP error. |
 
 ### Signature verification on the receiver
 
@@ -123,6 +143,8 @@ When a signing secret is configured, every request carries an `Orion-Signature` 
 timestamp is bound into the MAC. A receiver verifies by recomputing the MAC over the exact raw body
 it received and rejecting requests whose timestamp falls outside a freshness window, which stops
 replays.
+
+![WebhookVerifier.Verify: a malformed header returns Malformed, a timestamp outside the tolerance returns StaleTimestamp, a MAC that differs returns SignatureMismatch, otherwise IsValid is true](docs/diagrams/verify-signature.png)
 
 `WebhookVerifier` is the receiver-side counterpart to `WebhookSigner`. It recomputes the MAC over
 the same canonical preimage the signer uses, enforces the freshness window in both directions, and
@@ -158,6 +180,8 @@ The sender side of this contract is `IWebhookSigner.Sign(ReadOnlySpan<byte> body
 
 ### Retries and backoff
 
+![WebhookDispatcher flow: sign and POST, 2xx delivers, 408/429/5xx or a transport fault retries after backoff while attempts remain, any other 4xx or a spent budget calls OnExhausted, writes the dead-letter entry and returns a failed result](docs/diagrams/dispatch-retry.png)
+
 An attempt is retried when it produces a transport fault, a per-attempt timeout, or an HTTP
 `408`, `429`, or `5xx`. Any other `4xx` is treated as permanent and fails fast. Backoff is
 exponential from `BaseDelay`, doubled per attempt and clamped to `MaxDelay`, with equal jitter
@@ -168,7 +192,8 @@ of the `HttpClient`, which `AddOrionRelay` leaves uncapped so the two do not rac
 ### Delivery observer hook
 
 Implement `IWebhookDeliveryObserver` and register it in DI before resolving the dispatcher to see
-every attempt and every exhausted delivery, for dead-lettering, alerting, or audit:
+every attempt and every delivery that ends without success (budget exhausted or a non-retryable
+status), for alerting or audit:
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
@@ -184,7 +209,7 @@ public sealed class DeadLetterObserver(IDeadLetterStore store) : IWebhookDeliver
 
     public void OnExhausted(WebhookMessage message, WebhookDeliveryResult result)
     {
-        // The attempt budget ran out. Park the message for later redelivery.
+        // The delivery failed for good (budget spent or a non-retryable status). Park it.
         store.Park(message, result);
     }
 }
@@ -277,6 +302,32 @@ services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
 The sink and the delivery observer are complementary: `IWebhookDeliveryObserver.OnExhausted` fires
 first for in-process observability, then the entry is written to the sink for durable capture.
 
+### Durable dead-letter store (EF Core)
+
+`OrionRelay.EntityFrameworkCore` ships that durable sink. `EntityFrameworkCoreDeadLetterSink<TContext>`
+stores each entry as a `DeadLetterRecord` row (endpoint, payload, content type, event headers,
+attempts, last status, final error message, abandonment time), keyed by the message `EventId` so a
+re-routed delivery updates its row instead of duplicating it (a delivery without an `EventId` gets a
+surrogate key). It references `Microsoft.EntityFrameworkCore.Relational` only; add the provider you use.
+
+```csharp
+using Microsoft.EntityFrameworkCore;
+using Moongazing.OrionRelay;
+using Moongazing.OrionRelay.EntityFrameworkCore;
+
+// Replaces the no-op default sink, in either call order.
+services.AddOrionRelayEntityFrameworkCoreDeadLetterSink(o => o.UseSqlServer(connectionString));
+services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
+```
+
+The bundled `OrionRelayDeadLetterDbContext` maps the `OrionRelayDeadLetters` table; to host it in
+your own context, apply `DeadLetterRecordConfiguration` in `OnModelCreating` and call
+`AddOrionRelayEntityFrameworkCoreDeadLetterSink<AppDbContext>(...)`. The sink does not create the
+schema: add a migration. `GetHeldAsync(limit)` and `CountAsync()` on the concrete sink read the parked
+deliveries back, newest first. The package does not claim NativeAOT or trimming support, because EF
+Core's runtime does not. See the
+[package README](src/Moongazing.OrionRelay.EntityFrameworkCore/docs/README.md) for the full setup.
+
 ## Configuration
 
 `WebhookDeliveryOptions` is configured through the `AddOrionRelay` callback and validated eagerly at
@@ -316,7 +367,9 @@ builder.Services.AddOpenTelemetry()
     .WithMetrics(metrics => metrics.AddMeter(WebhookDiagnostics.MeterName));
 ```
 
-The diagnostics instance is registered as a singleton by `AddOrionRelay`.
+The diagnostics instance is registered as a singleton by `AddOrionRelay`. It derives from the
+family's `OrionInstrumentation` (`Orion.Abstractions`), so tags set through
+`WebhookDiagnostics.SetStaticTags` (for example tenant or region) are added to every measurement.
 
 ## Testing
 
@@ -326,7 +379,9 @@ fixed jitter, and a fixed `now`. The signer is deterministic for a given secret,
 timestamp. The suite covers signing (envelope shape, determinism, timestamp and secret sensitivity,
 empty-secret rejection), delivery (first-attempt success, retry-then-success, fail-fast on `4xx`,
 budget exhaustion, transport-fault retry, signing, caller cancellation, observer-fault isolation),
-and DI registration.
+verification, the dead-letter sinks, and DI registration. The EF Core sink is tested against a real
+file-backed SQLite database (restart, idempotent re-route, concurrent writers, inspection queries),
+and CI publishes a NativeAOT smoke test of the sign/verify round trip.
 
 ```
 dotnet test
@@ -338,7 +393,7 @@ live under `benchmarks/` and run with BenchmarkDotNet. See [benchmarks.md](bench
 ## Versioning
 
 OrionRelay follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The current release
-is `0.2.0`; while on the `0.x` line the public surface may still change between minor versions.
+is `0.5.0`; while on the `0.x` line the public surface may still change between minor versions.
 Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Design notes
@@ -350,9 +405,12 @@ Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 ## Documentation
 
 - [docs/FEATURES.md](docs/FEATURES.md) - the public surface, feature by feature.
+- [OrionRelay package README](src/Moongazing.OrionRelay/docs/README.md) and
+  [OrionRelay.EntityFrameworkCore package README](src/Moongazing.OrionRelay.EntityFrameworkCore/docs/README.md) - the NuGet pages.
 - [docs/ROADMAP.md](docs/ROADMAP.md) - directions under consideration (ideas, not promises).
 - [benchmarks.md](benchmarks.md) - what the benchmark suite measures and how to run it.
 - [CHANGELOG.md](CHANGELOG.md) - notable changes per release.
+- [SECURITY.md](SECURITY.md) - how to report a vulnerability privately.
 
 ## More from the Orion family
 

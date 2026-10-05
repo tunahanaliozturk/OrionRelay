@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="775" viewBox="0 0 1200 775">
+  <!--
+    Orion family diagram template. Copy it, keep <defs> and <style>, replace the body.
+    Classes: .step (our code) .ext (backend / external system) .ok (success end) .fail (failure path)
+             .decision (diamond) .note (side remark) .lane (sequence lifeline)
+    Arrows: class="flow" (main path), "flow alt" (alternate / failure path, dashed), "flow back" (response).
+  -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-fail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: "Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif; fill: #1e1b4b; }
+    .title { font-size: 24px; font-weight: 700; }
+    .subtitle { font-size: 14px; fill: #475569; }
+    .label { font-size: 15px; font-weight: 600; }
+    .small { font-size: 12.5px; fill: #475569; }
+    .code { font-family: "Cascadia Code", Consolas, "SF Mono", monospace; font-size: 13px; fill: #3730a3; }
+    .edge { font-size: 12.5px; fill: #334155; }
+    .step { fill: #eef2ff; stroke: #4f46e5; stroke-width: 2; }
+    .ext { fill: #f0f9ff; stroke: #0284c7; stroke-width: 2; }
+    .ok { fill: #ecfdf5; stroke: #059669; stroke-width: 2; }
+    .fail { fill: #fef2f2; stroke: #dc2626; stroke-width: 2; }
+    .decision { fill: #fffbeb; stroke: #d97706; stroke-width: 2; }
+    .note { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; stroke-dasharray: 4 3; }
+    .lane { stroke: #cbd5e1; stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .flow { fill: none; stroke: #64748b; stroke-width: 2; marker-end: url(#arrow); }
+    .flow.alt { stroke: #dc2626; stroke-dasharray: 6 4; marker-end: url(#arrow-fail); }
+    .flow.back { stroke-dasharray: 6 4; }
+    .badge { fill: #4f46e5; }
+    .badge-text { font-size: 12px; font-weight: 700; fill: #ffffff; }
+  </style>
+
+  <rect width="1200" height="775" fill="#ffffff"/>
+
+  <text class="title" x="40" y="52">OrionRelay - dispatch, retry and dead-letter</text>
+  <text class="subtitle" x="40" y="78">One DispatchAsync call: sign and POST, retry transient failures with backoff, route a terminal failure to the sink.</text>
+
+  <!-- start -->
+  <rect class="step" x="40" y="240" width="200" height="80" rx="14"/>
+  <text class="code" x="140" y="274" text-anchor="middle">DispatchAsync(message)</text>
+  <text class="small" x="140" y="298" text-anchor="middle">attempt = 1</text>
+
+  <path class="flow" d="M240,280 L288,280"/>
+
+  <!-- sign and post -->
+  <rect class="step" x="290" y="240" width="240" height="80" rx="14"/>
+  <text class="label" x="410" y="266" text-anchor="middle">Sign and POST</text>
+  <text class="small" x="410" y="288" text-anchor="middle">Orion-Signature, Orion-Event-Id</text>
+  <text class="small" x="410" y="308" text-anchor="middle">bounded by RequestTimeout</text>
+
+  <path class="flow" d="M530,280 L588,280"/>
+
+  <!-- decision 1: outcome -->
+  <polygon class="decision" points="690,210 790,280 690,350 590,280"/>
+  <text class="label" x="690" y="276" text-anchor="middle">attempt</text>
+  <text class="label" x="690" y="296" text-anchor="middle">outcome?</text>
+
+  <!-- success -->
+  <path class="flow" d="M690,210 L690,177"/>
+  <text class="edge" x="700" y="199">2xx</text>
+  <rect class="ok" x="560" y="105" width="260" height="70" rx="14"/>
+  <text class="label" x="690" y="134" text-anchor="middle">Delivered</text>
+  <text class="code" x="690" y="157" text-anchor="middle">Succeeded = true</text>
+
+  <!-- retryable -> decision 2 -->
+  <path class="flow" d="M690,350 L690,418"/>
+  <text class="edge" x="702" y="378">408 / 429 / 5xx,</text>
+  <text class="edge" x="702" y="395">transport fault or timeout</text>
+
+  <polygon class="decision" points="690,420 790,480 690,540 590,480"/>
+  <text class="small" x="690" y="476" text-anchor="middle">attempt &lt;</text>
+  <text class="code" x="690" y="496" text-anchor="middle">MaxAttempts?</text>
+
+  <!-- yes: backoff -->
+  <path class="flow" d="M590,480 L522,480"/>
+  <text class="edge" x="556" y="471" text-anchor="middle">yes</text>
+  <rect class="step" x="250" y="445" width="270" height="80" rx="14"/>
+  <text class="label" x="385" y="470" text-anchor="middle">Wait backoff</text>
+  <text class="small" x="385" y="492" text-anchor="middle">min(BaseDelay x 2^(n-1), MaxDelay)</text>
+  <text class="small" x="385" y="512" text-anchor="middle">equal jitter: half kept, half random</text>
+
+  <path class="flow" d="M410,445 L410,322"/>
+  <text class="edge" x="422" y="388">attempt + 1, try again</text>
+
+  <!-- no: budget spent -->
+  <path class="flow alt" d="M790,480 L848,480"/>
+  <text class="edge" x="819" y="471" text-anchor="middle">no</text>
+
+  <!-- fatal -->
+  <path class="flow alt" d="M790,280 L1005,280 L1005,443"/>
+  <text class="edge" x="900" y="270" text-anchor="middle">any other 4xx: fatal</text>
+
+  <!-- terminal failure chain -->
+  <rect class="fail" x="850" y="445" width="310" height="70" rx="14"/>
+  <text class="code" x="1005" y="474" text-anchor="middle">observer.OnExhausted(message, result)</text>
+  <text class="small" x="1005" y="496" text-anchor="middle">an observer fault is swallowed</text>
+
+  <path class="flow alt" d="M1005,515 L1005,558"/>
+  <rect class="fail" x="850" y="560" width="310" height="70" rx="14"/>
+  <text class="code" x="1005" y="589" text-anchor="middle">IDeadLetterSink.WriteAsync(entry)</text>
+  <text class="small" x="1005" y="611" text-anchor="middle">DeadLetterEntry; a sink fault is swallowed</text>
+
+  <path class="flow alt" d="M1005,630 L1005,673"/>
+  <rect class="fail" x="850" y="675" width="310" height="70" rx="14"/>
+  <text class="label" x="1005" y="704" text-anchor="middle">Delivery failed</text>
+  <text class="code" x="1005" y="727" text-anchor="middle">Succeeded = false (returned)</text>
+
+  <!-- notes -->
+  <rect class="note" x="40" y="590" width="760" height="155" rx="10"/>
+  <text class="small" x="60" y="618">Every attempt calls IWebhookDeliveryObserver.OnAttempt and counts orion.relay.attempts</text>
+  <text class="small" x="60" y="638">(success / retryable / fatal). Each delivery counts orion.relay.deliveries and records the histogram.</text>
+  <text class="small" x="60" y="666">Defaults: MaxAttempts 4, BaseDelay 1 s, MaxDelay 30 s, RequestTimeout 30 s.</text>
+  <text class="small" x="60" y="694">Caller cancellation is not a failure: it aborts the dispatch, backoff waits included, and</text>
+  <text class="small" x="60" y="714">DispatchAsync throws OperationCanceledException instead of returning a result.</text>
+</svg>

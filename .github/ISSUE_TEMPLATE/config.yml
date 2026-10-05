@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/tunahanaliozturk/OrionRelay#readme
+    about: The README documents the real behaviour of OrionRelay and OrionRelay.EntityFrameworkCore. Read it before asking "how do I ...".
+  - name: Feature reference
+    url: https://github.com/tunahanaliozturk/OrionRelay/blob/main/docs/FEATURES.md
+    about: The public surface, feature by feature.
+  - name: Roadmap
+    url: https://github.com/tunahanaliozturk/OrionRelay/blob/main/docs/ROADMAP.md
+    about: What is planned next. Check it before opening a feature request.
+  - name: Security vulnerability
+    url: https://github.com/tunahanaliozturk/OrionRelay/blob/main/SECURITY.md
+    about: Do not file a public issue. Report it privately as described in SECURITY.md.

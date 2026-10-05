@@ -1,7 +1,5 @@
 # OrionRelay.EntityFrameworkCore
 
-[![NuGet](https://img.shields.io/nuget/v/OrionRelay.EntityFrameworkCore.svg)](https://www.nuget.org/packages/OrionRelay.EntityFrameworkCore/)
-
 A durable Entity Framework Core dead-letter sink for
 [OrionRelay](https://www.nuget.org/packages/OrionRelay/). It implements the existing
 `IDeadLetterSink` over a relational table, so webhook deliveries that exhaust their attempt budget
@@ -9,6 +7,8 @@ survive a process restart and are shared across instances, instead of being held
 process-local in-memory sink that loses its entries on restart.
 
 Part of the **Orion** family.
+
+![OrionRelay packages: the dispatcher routes terminal failures to an IDeadLetterSink; this package's EntityFrameworkCoreDeadLetterSink stores them in your database](https://raw.githubusercontent.com/tunahanaliozturk/OrionRelay/main/docs/diagrams/overview.png)
 
 ## What it does
 
@@ -31,31 +31,33 @@ Part of the **Orion** family.
 
 ## Install
 
-```
-dotnet add package OrionRelay.EntityFrameworkCore
-```
+    dotnet add package OrionRelay.EntityFrameworkCore
+
+Plugs into `OrionRelay` (referenced automatically) as its `IDeadLetterSink`.
 
 You also need an EF Core provider package for your database, for example
 `Microsoft.EntityFrameworkCore.SqlServer` or `Npgsql.EntityFrameworkCore.PostgreSQL`.
 
 ## Quick start
 
-Register the sink **before** `AddOrionRelay()`, configuring the context inline. The bundled
+Register the sink next to `AddOrionRelay()`, configuring the context inline. The bundled
 `OrionRelayDeadLetterDbContext` is ready to use:
 
 ```csharp
+using Microsoft.EntityFrameworkCore;
+using Moongazing.OrionRelay;
 using Moongazing.OrionRelay.EntityFrameworkCore;
 
-// Register the durable sink first: AddOrionRelay only adds the no-op sink if no IDeadLetterSink
-// is already present. This also registers a context factory the sink resolves a short-lived
-// context from per abandoned delivery.
+// Replaces the no-op default sink that AddOrionRelay adds, in either call order. It also registers
+// a context factory the sink resolves a short-lived context from per abandoned delivery.
 builder.Services.AddOrionRelayEntityFrameworkCoreDeadLetterSink(o =>
     o.UseSqlServer(builder.Configuration.GetConnectionString("Webhooks")));
 
 builder.Services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
 ```
 
-A delivery that exhausts its attempt budget is now parked in the database instead of discarded.
+A delivery that ends without success (attempt budget spent, or a non-retryable status such as 400)
+is now parked in the database instead of discarded.
 
 ## Inspecting held deliveries
 
@@ -78,6 +80,9 @@ If you already have a context, host the dead-letter table in it by applying the 
 `OnModelCreating`, then point the sink at that context:
 
 ```csharp
+using Microsoft.EntityFrameworkCore;
+using Moongazing.OrionRelay.EntityFrameworkCore;
+
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -100,18 +105,21 @@ builder.Services.AddOrionRelayEntityFrameworkCoreDeadLetterSink<AppDbContext>(o 
 The sink does not create the schema. Add a migration for the mapped entity the usual way and apply
 it as part of your deployment:
 
-```
-dotnet ef migrations add AddOrionRelayDeadLetters
-dotnet ef database update
-```
+    dotnet ef migrations add AddOrionRelayDeadLetters
+    dotnet ef database update
 
-## Versioning
+## Versioning and AOT
 
 Multi-targets `net8.0`, `net9.0`, and `net10.0`, pinning the matching EF Core major per target
-framework. Tracks the OrionRelay version line. See the
-[root README](https://github.com/tunahanaliozturk/OrionRelay) and
-[CHANGELOG](https://github.com/tunahanaliozturk/OrionRelay/blob/main/CHANGELOG.md).
+framework (8.0.10+, 9.x, 10.x). Tracks the OrionRelay version line. Not NativeAOT or trimming
+compatible, because EF Core's runtime is not.
 
-## License
+## Related packages
 
-Licensed under the [MIT License](https://github.com/tunahanaliozturk/OrionRelay/blob/main/LICENSE).
+- `OrionRelay` - the webhook dispatcher, signer and verifier this sink plugs into.
+
+## Links
+
+- Documentation and full README: https://github.com/tunahanaliozturk/OrionRelay
+- Changelog: https://github.com/tunahanaliozturk/OrionRelay/blob/main/CHANGELOG.md
+- License: MIT

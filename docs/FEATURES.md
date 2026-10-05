@@ -1,7 +1,8 @@
 # OrionRelay Features
 
-A feature-by-feature tour of the public surface of `Moongazing.OrionRelay` (NuGet id `OrionRelay`).
-Everything here reflects the shipped `0.1.0` API. Internals such as the backoff calculation and the
+A feature-by-feature tour of the public surface of `Moongazing.OrionRelay` (NuGet id `OrionRelay`)
+and its companion `Moongazing.OrionRelay.EntityFrameworkCore` (NuGet id `OrionRelay.EntityFrameworkCore`).
+Everything here reflects the shipped `0.5.0` API. Internals such as the backoff calculation and the
 HTTP request construction are private and are described only by their observable behaviour.
 
 ---
@@ -28,7 +29,8 @@ Task<WebhookDeliveryResult> DispatchAsync(
     WebhookMessage message, CancellationToken cancellationToken = default);
 ```
 
-- Returns when delivery succeeds (a 2xx response) or the attempt budget is exhausted.
+- Returns when delivery succeeds (a 2xx response), a non-retryable status ends it, or the attempt
+  budget is exhausted.
 - A cancelled `cancellationToken` aborts the whole delivery, including backoff waits, and throws
   `OperationCanceledException` rather than returning a failure result.
 - Each attempt POSTs the message body to `WebhookMessage.Endpoint` with the configured content type.
@@ -88,6 +90,8 @@ README "Signature verification on the receiver" section for a worked handler exa
 
 ## 3. Retries and backoff
 
+![WebhookDispatcher flow: sign and POST, 2xx delivers, 408/429/5xx or a transport fault retries after backoff while attempts remain, any other 4xx or a spent budget calls OnExhausted, writes the dead-letter entry and returns a failed result](diagrams/dispatch-retry.png)
+
 The dispatcher classifies each attempt and retries only the transient ones:
 
 | Attempt outcome | Classification |
@@ -129,8 +133,8 @@ attempt is also bounded by `RequestTimeout`, enforced by the dispatcher independ
 |--------|------|-------|
 | `Succeeded` | `bool` | True when a 2xx arrived within the attempt budget. |
 | `Attempts` | `int` | Attempts made, including the first send. |
-| `StatusCode` | `int?` | Last HTTP status observed, or null if every attempt failed at the transport level. |
-| `FinalException` | `Exception?` | Final transport fault, when delivery ended on one rather than an HTTP error. |
+| `StatusCode` | `int?` | HTTP status of the final attempt, or null when the final attempt failed at the transport level (fault or timeout). |
+| `FinalException` | `Exception?` | The final attempt's transport fault or timeout, when delivery ended on one rather than an HTTP error. |
 
 ---
 
@@ -144,7 +148,9 @@ void OnExhausted(WebhookMessage message, WebhookDeliveryResult result);
 ```
 
 - `OnAttempt` fires after every individual HTTP attempt, success or failure.
-- `OnExhausted` fires once when a delivery is abandoned after exhausting its attempt budget.
+- `OnExhausted` fires once when a delivery ends without success: the attempt budget is exhausted or
+  a non-retryable status (any `4xx` other than `408`/`429`) stops it early. The name predates the
+  fatal-status case.
 - It is observability only. The dispatcher swallows any exception an observer raises, so an observer
   outage can never break delivery.
 - Register one in DI before resolving the dispatcher. If none is registered, the built-in
@@ -154,8 +160,10 @@ Typical uses: dead-lettering exhausted deliveries, alerting, and per-attempt aud
 
 ### Dead-letter sink
 
-`IDeadLetterSink` receives each delivery that exhausts its attempt budget, exactly once, carrying
-its terminal failure context, so you can persist, alert on, or replay it.
+`IDeadLetterSink` receives each delivery that ends without success (budget exhausted or a
+non-retryable status), exactly once, after `OnExhausted`, as a `DeadLetterEntry` carrying the
+message, the terminal `WebhookDeliveryResult` and `DeadLetteredAt`, so you can persist, alert on, or
+replay it.
 
 - The default registered by `AddOrionRelay` is `NullDeadLetterSink`: it discards every entry and
   retains nothing. This keeps the default safe under a prolonged receiver outage, where a retaining
@@ -168,7 +176,7 @@ its terminal failure context, so you can persist, alert on, or replay it.
 - Register your own sink in DI before the dispatcher resolves to override the default:
 
 ```csharp
-\ Opt into bounded in-memory capture (e.g. for local inspection):
+// Opt into bounded in-memory capture (e.g. for local inspection):
 services.AddSingleton<IDeadLetterSink>(new InMemoryDeadLetterSink(capacity: 256));
 services.AddOrionRelay(signingSecret: "whsec_your_shared_secret");
 ```
@@ -180,8 +188,22 @@ For a durable sink that survives a restart, the companion package `OrionRelay.En
 implements this same `IDeadLetterSink` over a relational table via EF Core (no interface change). It
 persists the whole abandoned delivery, is idempotent on the delivery id when a terminal delivery is
 re-routed, and exposes a read-back query for triage. Register it with
-`AddOrionRelayEntityFrameworkCoreDeadLetterSink(...)` before `AddOrionRelay`; it references only
-`Microsoft.EntityFrameworkCore.Relational`, so the consumer picks the provider.
+`AddOrionRelayEntityFrameworkCoreDeadLetterSink(...)` (or the `<TContext>` overload for your own
+context); it replaces the no-op default in either call order relative to `AddOrionRelay`. It
+references only `Microsoft.EntityFrameworkCore.Relational`, so the consumer picks the provider. Its
+public surface:
+
+| Type / member | Notes |
+|---------------|-------|
+| `EntityFrameworkCoreDeadLetterSink<TContext>` | The `IDeadLetterSink`. Writes one `DeadLetterRecord` per entry through an `IDbContextFactory<TContext>`; idempotent on `DeliveryId`. |
+| `GetHeldAsync(int? limit = null, CancellationToken)` | Parked deliveries, newest abandonment first; a negative limit throws `ArgumentOutOfRangeException`. |
+| `CountAsync(CancellationToken)` | Number of parked deliveries. |
+| `DeadLetterRecord` | `DeliveryId` (the `EventId`, or a surrogate when there is none), `Endpoint`, `Body`, `ContentType`, `EventType`, `EventId`, `Attempts`, `StatusCode`, `FinalError` (exception message), `DeadLetteredAtTicks` (UTC ticks). |
+| `DeadLetterRecordConfiguration` | The mapping: table `OrionRelayDeadLetters` (`DefaultTableName`, or a custom name), key `DeliveryId` (max 1024), index on `DeadLetteredAtTicks`. |
+| `OrionRelayDeadLetterDbContext` | A ready-made context exposing `DeadLetters`. |
+
+The sink does not create the schema; add a migration. The package is not marked AOT-compatible,
+because EF Core's runtime is not trim or NativeAOT safe.
 
 ---
 
@@ -196,8 +218,11 @@ re-routed, and exposes a read-back query for triage. Register it with
 | `orion.relay.attempts` | `Counter<long>` | `orion.outcome` (`success`/`retryable`/`fatal`) |
 | `orion.relay.delivery.attempts` | `Histogram<int>` | `event_type` |
 
-The instance is `IDisposable` (disposing it releases the meter) and is registered as a singleton by
-`AddOrionRelay`. Any OpenTelemetry `MeterProvider` or raw `MeterListener` can subscribe by meter name.
+`WebhookDiagnostics` derives from `OrionInstrumentation` (`Orion.Abstractions` 1.0), so instrument
+and tag names follow the family's `OrionTelemetry` convention, and tags set through `SetStaticTags`
+(tenant, region, ...) are stamped onto every measurement. The instance is `IDisposable` (disposing it
+releases the meter) and is registered as a singleton by `AddOrionRelay`. Any OpenTelemetry
+`MeterProvider` or raw `MeterListener` can subscribe by meter name.
 
 ---
 
@@ -213,8 +238,9 @@ IServiceCollection AddOrionRelay(
 ```
 
 It registers the validated options, the singleton `WebhookDiagnostics`, a signer when a non-empty
-`signingSecret` is supplied, a dedicated named `HttpClient` (left uncapped so the dispatcher's
-per-attempt timeout governs), and the `IWebhookDispatcher` itself. An `IWebhookDeliveryObserver`
+`signingSecret` is supplied, the no-op `NullDeadLetterSink` as the default `IDeadLetterSink`, a
+dedicated named `HttpClient` (left uncapped so the dispatcher's per-attempt timeout governs), and the
+`IWebhookDispatcher` itself. An `IWebhookDeliveryObserver`
 registered before the dispatcher is resolved is picked up automatically. Registrations use
 `TryAdd*`, so your own prior registrations of any of these services win.
 </content>
